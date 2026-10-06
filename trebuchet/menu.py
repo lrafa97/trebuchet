@@ -394,7 +394,7 @@ class App:
             self.show_suggestions(suggestions)
             si = io.choose("Qual destas é a tua?",
                            [f"{m.entry.name}  [{', '.join(m.entry.chips)}]" for m in suggestions]
-                           + ["Nenhuma: escolher a marca e a board à mão"])
+                           + ["Nenhuma destas: escolher a marca e a board à mão (ou criar do zero)"])
             if si is None:
                 return None
             if si < len(suggestions):
@@ -405,8 +405,9 @@ class App:
             vendors = [v for v in (*(k for k, _ in catalog.VENDORS), catalog.OTHER)
                        if any(x.vendor == v for x in usable)]
             vi = io.choose("Marca da board:", [f"{labels[v]}  ({sum(1 for x in usable if x.vendor == v)})"
-                                               for v in vendors])
-            if vi is None:
+                                               for v in vendors] + ["A minha board não está aqui: criar do zero"])
+            if vi is None or vi == len(vendors):
+                io.say("\nA criar o perfil do zero.")
                 return None
             pool = [x for x in usable if x.vendor == vendors[vi]]
             core = discover.chip_core(chip_hint)
@@ -415,8 +416,10 @@ class App:
                 if same:
                     io.say(f"A mostrar só as boards com o chip visto ({core}).")
                     pool = same
-            bi = io.choose("Board:", [f"{x.name}   [{', '.join(x.chips)}]" for x in pool])
-            if bi is None:
+            bi = io.choose("Board:", [f"{x.name}   [{', '.join(x.chips)}]" for x in pool]
+                           + ["Não é nenhuma destas: criar do zero"])
+            if bi is None or bi == len(pool):
+                io.say("\nA criar o perfil do zero.")
                 return None
             e = pool[bi]
         io.say(f"\nO que o Klipper diz sobre esta board ({Path(e.source).name}):")

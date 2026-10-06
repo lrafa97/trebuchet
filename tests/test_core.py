@@ -703,6 +703,26 @@ class CatalogAndPinTests(unittest.TestCase):
             self.assertTrue(all(m.entry.family == "stm32" for m in only446))
             self.assertEqual(pinmatch.rank(user, es, chip_hint="rp2040xx"), [])
 
+    def test_catalog_has_create_from_scratch_escape_hatch(self):
+        from trebuchet.menu import App
+
+        class IO(FakeIO):
+            def __init__(self):
+                super().__init__(confirm=False)
+                self.seen = []
+            def title(self, t): pass
+            def choose(self, title, options):
+                self.seen.append((title, options))
+                return len(options) - 1        # sempre a última: "criar do zero"
+
+        with tempfile.TemporaryDirectory() as t:
+            s, _ = make_env(Path(t))
+            s.klipper_dir = self.klipper_cfgs(Path(t))
+            io = IO()
+            self.assertIsNone(App(s, io).pick_catalog_entry())
+        self.assertIn("criar do zero", io.seen[0][1][-1])
+        self.assertIn("A criar o perfil do zero", io.text)
+
     def test_app_pin_suggestions_without_cfg_are_empty(self):
         from trebuchet.menu import App
         with tempfile.TemporaryDirectory() as t:

@@ -527,6 +527,8 @@ class DiscoverTests(unittest.TestCase):
                 return (self.answers.pop(0) if self.answers else "") or default
             def choose(self, title, options):
                 self.lines.append(f"CHOOSE {title} -> {options}")
+                if options[0].startswith("Criar perfil novo"):   # sem perfis compatíveis
+                    return len(options) - 1                       # ignorar
                 return 0   # primeira opção: o perfil sugerido
 
         with tempfile.TemporaryDirectory() as t:
@@ -551,6 +553,75 @@ class DiscoverTests(unittest.TestCase):
         self.assertEqual(next(b for b in saved.boards if b.label == "mcu").chip, "stm32f446xx")
         self.assertEqual(next(b for b in saved.boards if b.label == "toolhead").uuid, "0123456789ab")
         self.assertEqual(app.reg.katapult("minha-maquina", "mcu"), "yes")
+
+
+class ProfileFromDiscoveryTests(unittest.TestCase):
+    def test_new_profile_prefilled_from_device(self):
+        from trebuchet.menu import App
+
+        class IO(FakeIO):
+            def __init__(self, answers):
+                super().__init__(confirm=False)
+                self.answers = list(answers)
+                self.asked = []
+
+            def title(self, t): pass
+            def ask(self, text, default=""):
+                self.asked.append(text)
+                return (self.answers.pop(0) if self.answers else "") or default
+            def choose(self, title, options):
+                self.asked.append("CHOOSE " + title)
+                return 0
+
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            s, _ = make_env(tmp)
+            cfg = tmp / "w.config"
+            cfg.write_text("CONFIG_MACH_STM32=y\n")
+            io = IO(["EBB42 1.2 BTT", "", "", "", "", str(cfg), str(cfg)])
+            p = App(s, io).new_profile(chip="stm32g0b1xx", interface="can")
+            self.assertEqual((p.family, p.mcu, p.interface), ("stm32", "stm32g0b1", "can"))
+            self.assertEqual(p.id, "ebb42-1.2-btt")
+            self.assertTrue(p.klipper_config.exists())
+            # não perguntou família nem interface: já se sabiam
+            self.assertFalse(any("Família" in q or "Interface com o Pi" in q for q in io.asked))
+
+
+class UiTests(unittest.TestCase):
+    def run_io(self, answers, fn):
+        import builtins
+        import contextlib
+        import io as _io
+        from trebuchet.ui import TerminalIO
+        it = iter(answers)
+        orig = builtins.input
+        builtins.input = lambda prompt="": next(it)
+        out = _io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                res = fn(TerminalIO(color=False))
+        finally:
+            builtins.input = orig
+        return res, out.getvalue()
+
+    def test_choose_is_numeric_with_zero_to_cancel(self):
+        res, out = self.run_io(["EBB42 1.2 BTT", "3", ], lambda io: io.choose("T", ["a", "b", "c"]))
+        self.assertEqual(res, 2)
+        self.assertIn("1) a", out)
+        self.assertIn("0) Cancelar", out)
+        self.assertNotIn("B)", out)
+        self.assertIn("Opção inválida", out)            # texto livre não é aceite como resposta
+
+    def test_choose_cancel_and_range(self):
+        res, _ = self.run_io(["9", "0"], lambda io: io.choose("T", ["a"]))
+        self.assertIsNone(res)
+
+    def test_menu_shows_exit_and_returns_index(self):
+        res, out = self.run_io(["2"], lambda io: io.menu("M", ["x", "y"], back="Sair"))
+        self.assertEqual(res, 1)
+        self.assertIn("0) Sair", out)
+        res, _ = self.run_io(["0"], lambda io: io.menu("M", ["x"], back="Sair"))
+        self.assertIsNone(res)
 
 
 class TomlMiniTests(unittest.TestCase):

@@ -56,31 +56,27 @@ class TerminalIO:
         self._input(f"{text} ")
 
     def choose(self, title: str, options: list[str]) -> int | None:
-        """Lista numerada; devolve o índice (0-based) ou None se cancelar."""
+        """Lista numerada 1..N e 0 para cancelar; devolve o índice (0-based) ou None."""
         print(f"\n{title}")
         for i, opt in enumerate(options, 1):
             print(f"  {i}) {opt}")
-        print("  B) Cancelar")
+        print("  0) Cancelar")
+        return self._pick(len(options))
+
+    def menu(self, title: str, items: list[str], back: str | None = "Voltar") -> int | None:
+        """Menu numerado 1..N, com 0 para voltar (ou sair). Devolve o índice (0-based)
+        da opção escolhida, ou None para voltar/sair."""
+        self.title(title)
+        for i, text in enumerate(items, 1):
+            print(f"  {i}) {text}")
+        print(f"  0) {back or 'Voltar'}")
+        return self._pick(len(items))
+
+    def _pick(self, n: int) -> int | None:
         while True:
             val = self._input("Escolhe: ").lower()
-            if val in ("b", "q", ""):
+            if val in ("0", "", "q", "b"):
                 return None
-            if val.isdigit() and 1 <= int(val) <= len(options):
+            if val.isdigit() and 1 <= int(val) <= n:
                 return int(val) - 1
-            print("Opção inválida.")
-
-    def menu(self, title: str, entries: list[tuple[str, str]],
-             back: str | None = "Voltar") -> str:
-        """Menu estilo KIAUH. `entries` = [(chave, texto)]. Devolve a chave escolhida
-        ('b' para voltar, 'q' para sair)."""
-        self.title(title)
-        for key, text in entries:
-            print(f"  {key}) {text}")
-        if back:
-            print(f"  B) {back}")
-        valid = {k.lower() for k, _ in entries} | ({"b", "q"} if back else {"q"})
-        while True:
-            val = self._input("Escolhe uma ação: ").lower()
-            if val in valid:
-                return val
-            print("Opção inválida.")
+            print(f"Opção inválida: escreve só o número da lista (1 a {n}, ou 0 para sair).")

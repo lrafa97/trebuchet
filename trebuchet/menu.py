@@ -77,37 +77,37 @@ class App:
     def main(self) -> None:
         while True:
             k = self.io.menu(f"Trebuchet - Klipper Flash Helper v{__version__}", [
-                ("1", "Máquinas (criar / abrir)"),
-                ("2", "Perfis de board"),
-                ("3", "Detetar dispositivos ligados"),
-                ("4", "Guias do 1.º Katapult"),
-                ("5", "Diagnóstico (ferramentas e caminhos)"),
-            ], back=None)
-            if k == "q":
+                "Máquinas (criar / abrir)",
+                "Perfis de board",
+                "Detetar dispositivos ligados",
+                "Guias do 1.º Katapult",
+                "Diagnóstico (ferramentas e caminhos)",
+            ], back="Sair")
+            if k is None:
                 return
-            {"1": self.machines_menu, "2": self.profiles_menu, "3": self.detect_menu,
-             "4": self.guides_menu, "5": self.doctor}[k]()
+            (self.machines_menu, self.profiles_menu, self.detect_menu,
+             self.guides_menu, self.doctor)[k]()
 
     # ------------------------------------------------------------------ máquinas
     def machines_menu(self) -> None:
         while True:
             ms = list_machines(self.s.machines_dir)
-            entries = [(str(i), f"{m.name}  ({len(m.boards)} boards)") for i, m in enumerate(ms, 1)]
-            entries.append(("d", "Descobrir o que está ligado e criar a máquina (automático)"))
-            entries.append(("n", "Nova máquina (escolher as boards à mão)"))
+            entries = [f"{m.name}  ({len(m.boards)} boards)" for m in ms]
+            entries.append("Descobrir o que está ligado e criar a máquina (automático)")
+            entries.append("Nova máquina (escolher as boards à mão)")
             k = self.io.menu("Máquinas", entries)
-            if k in ("b", "q"):
+            if k is None:
                 return
-            if k == "d":
+            if k == len(ms):
                 m = self.discover_flow()
                 if m:
                     self.machine_menu(m)
-            elif k == "n":
+            elif k == len(ms) + 1:
                 m = self.new_machine()
                 if m:
                     self.machine_menu(m)
             else:
-                self.machine_menu(ms[int(k) - 1])
+                self.machine_menu(ms[k])
 
     def run_discovery(self, *, ask: bool = True, canbus_query: bool = False,
                       use_moonraker: bool = True) -> "discover.Discovery":
@@ -146,11 +146,21 @@ class App:
         for x in discover.flash_order(found.devices):
             cands = discover.candidate_profiles(x, profs)
             ident = x.uuid or x.serial or x.device
-            opts = [f"{p.name}  [{p.mcu}, {p.interface}]" for p in cands] + ["(ignorar esta board)"]
+            opts = [f"{p.name}  [{p.mcu}, {p.interface}]" for p in cands]
+            opts += ["Criar perfil novo para esta board", "Ignorar esta board"]
+            if not cands:
+                io.say(f"\nNão há perfis compatíveis com {x.name} (chip {x.chip or '?'}, "
+                       f"{discover.profile_interface_for(x)}).")
             idx = io.choose(f"{x.name}: {x.transport}, chip {x.chip or '?'}, {ident}", opts)
-            if idx is None or idx >= len(cands):
+            if idx is None or idx == len(cands) + 1:
                 continue
-            p = cands[idx]
+            if idx == len(cands):
+                p = self.new_profile(chip=x.chip, interface=discover.profile_interface_for(x))
+                if p is None:
+                    continue
+                profs.append(p)
+            else:
+                p = cands[idx]
             label = slugify(io.ask("Nome desta board na máquina", x.name))
             if m.board(label):
                 io.warn("Já existe uma board com esse nome; ignorada.")
@@ -221,26 +231,26 @@ class App:
     def machine_menu(self, m: Machine) -> None:
         while True:
             k = self.io.menu(f"Máquina: {m.name}", [
-                ("1", "Assistente completo (aconselhar → construir → gravar)"),
-                ("2", "Estado das boards"),
-                ("3", "Aconselhamento e plano"),
-                ("4", "Construir firmwares"),
-                ("5", "Gravar (usa as builds guardadas)"),
-                ("6", "Editar boards (adicionar, remover, UUID/serial, Katapult, teste ativo)"),
+                "Assistente completo (aconselhar → construir → gravar)",
+                "Estado das boards",
+                "Aconselhamento e plano",
+                "Construir firmwares",
+                "Gravar (usa as builds guardadas)",
+                "Editar boards (adicionar, remover, UUID/serial, Katapult, teste ativo)",
             ])
-            if k in ("b", "q"):
+            if k is None:
                 return
-            if k == "1":
+            if k == 0:
                 self.wizard(m)
-            elif k == "2":
+            elif k == 1:
                 self.show_state(m)
-            elif k == "3":
+            elif k == 2:
                 self.show_plan(self.plan_for(m))
-            elif k == "4":
+            elif k == 3:
                 self.run_phase(m, "build")
-            elif k == "5":
+            elif k == 4:
                 self.run_phase(m, "flash")
-            elif k == "6":
+            elif k == 5:
                 self.edit_boards(m)
 
     def show_state(self, m: Machine) -> None:
@@ -291,13 +301,14 @@ class App:
     def edit_boards(self, m: Machine) -> None:
         while True:
             self.show_state(m)
-            k = self.io.menu("Editar boards", [
-                ("a", "Adicionar board"), ("r", "Remover board"),
-                ("i", "Alterar UUID / serial / dispositivo"),
-                ("k", "Definir se tem Katapult"), ("t", "Teste ativo 'tem Katapult?'"),
+            idx_k = self.io.menu("Editar boards", [
+                "Adicionar board", "Remover board",
+                "Alterar UUID / serial / dispositivo",
+                "Definir se tem Katapult", "Teste ativo 'tem Katapult?'",
             ])
-            if k in ("b", "q"):
+            if idx_k is None:
                 return
+            k = "arikt"[idx_k]
             if k == "a":
                 self.add_board(m)
                 continue
@@ -325,10 +336,10 @@ class App:
     # ------------------------------------------------------------------ perfis
     def profiles_menu(self) -> None:
         while True:
-            k = self.io.menu("Perfis de board", [("1", "Listar perfis"), ("2", "Criar perfil novo")])
-            if k in ("b", "q"):
+            k = self.io.menu("Perfis de board", ["Listar perfis", "Criar perfil novo"])
+            if k is None:
                 return
-            if k == "1":
+            if k == 0:
                 ps = list_profiles(self.s.profiles_dir)
                 if not ps:
                     self.io.say("\nAinda não há perfis. Cria um com a opção 2.")
@@ -343,27 +354,39 @@ class App:
             else:
                 self.new_profile()
 
-    def new_profile(self) -> BoardProfile | None:
+    def new_profile(self, chip: str = "", interface: str = "") -> BoardProfile | None:
+        """`chip` e `interface` vêm da descoberta: quando existem, não se pergunta outra vez."""
         io = self.io
-        name = io.ask("Nome da board (ex.: a referência comercial)")
+        name = io.ask("Nome da board (ex.: EBB42 1.2 BTT)")
         if not name:
             return None
         pid = slugify(io.ask("Identificador do perfil", slugify(name)))
-        fam_i = io.choose("Família do MCU (a v1 só suporta stm32 e rp2040)", list(FAMILIES))
-        if fam_i is None:
-            return None
-        mcu = io.ask("MCU exato (ex.: stm32f446; só o que tiveres confirmado)")
-        if_i = io.choose("Interface com o Pi", list(INTERFACES))
-        if if_i is None:
-            return None
-        interface = INTERFACES[if_i]
+        known_family = ("stm32" if chip.lower().startswith("stm32")
+                        else "rp2040" if chip.lower().startswith("rp2040") else "")
+        if known_family:
+            family = known_family
+            io.say(f"Família {family} (do chip visto: {chip}).")
+        else:
+            fam_i = io.choose("Família do MCU (a v1 só suporta stm32 e rp2040)", list(FAMILIES))
+            if fam_i is None:
+                return None
+            family = FAMILIES[fam_i]
+        mcu = io.ask("MCU exato (ex.: stm32f446; só o que tiveres confirmado)",
+                     discover.chip_core(chip) or chip)
+        if interface in INTERFACES:
+            io.say(f"Interface {interface} (do que está ligado).")
+        else:
+            if_i = io.choose("Interface com o Pi", list(INTERFACES))
+            if if_i is None:
+                return None
+            interface = INTERFACES[if_i]
         m_i = io.choose("Como se grava o 1.º Katapult nesta board?", list(FIRST_KATAPULT_METHODS))
         if m_i is None:
             return None
         bitrate = int(io.ask("Bitrate CAN", "1000000")) if interface in ("can", "usb-can-bridge") else None
         baud = int(io.ask("Baud rate UART", "250000")) if interface == "uart" else None
         p = BoardProfile(
-            id=pid, name=name, mcu=mcu, family=FAMILIES[fam_i], interface=interface,
+            id=pid, name=name, mcu=mcu, family=family, interface=interface,
             first_katapult_method=FIRST_KATAPULT_METHODS[m_i], can_bitrate=bitrate, uart_baud=baud,
             dfu_heater_warning=io.confirm("Avisar para desligar aquecedores em DFU?", default=True),
             notes=io.ask("Notas (opcional)"))

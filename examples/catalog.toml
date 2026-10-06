@@ -1,0 +1,10 @@
+# Boards que o Klipper não traz. Copia para ~/trebuchet_data/catalog.toml.
+# Só acrescentes dados que confirmaste na documentação do fabricante; põe a fonte.
+[[board]]
+id = "exemplo-board"
+vendor = "outras"            # bigtreetech | mellow | fysetc | outras
+name = "Nome comercial da board"
+chip = "stm32g0b1"
+interface = "can"            # palpite inicial: usb | can
+notes = "O que o fabricante diz para compilar: bootloader, cristal, comunicação."
+source = "https://link-da-documentacao"

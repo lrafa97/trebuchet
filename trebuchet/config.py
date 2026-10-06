@@ -38,6 +38,10 @@ class Settings:
         return self.data_dir / "machines"
 
     @property
+    def catalog_file(self) -> Path:
+        return self.data_dir / "catalog.toml"
+
+    @property
     def builds_dir(self) -> Path:
         return self.data_dir / "builds"
 

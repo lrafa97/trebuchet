@@ -95,6 +95,22 @@ escolhes o perfil de cada board; o chip só filtra a lista e fica gravado na má
 corresponder ao perfil, o plano **bloqueia** (protege contra gravar a board errada).
 A ordem proposta: boards fora do CAN, nós CAN, ponte por último.
 
+## Catálogo de boards e sugestão por pins
+
+Em vez de uma lista nossa (que ficava desatualizada e que eu teria de inventar), o catálogo lê
+o comentário inicial de cada `~/klipper/config/generic-*.cfg` e `sample-*.cfg`: é onde o Klipper diz
+para que MCU, bootloader e cristal compilar (BigTreeTech, Mellow/FLY, FYSETC e outras). Está
+sempre igual à tua versão do Klipper. `Perfis > Criar perfil novo > A partir de uma board conhecida`
+mostra o texto do Klipper e preenche o perfil (nome, MCU, família).
+
+- Se o texto menciona **vários chips** (ex.: Octopus: F446 ou F429), o programa pergunta qual é o teu.
+- Boards que o Klipper não traz: acrescenta-as a `~/trebuchet_data/catalog.toml` (ver `examples/catalog.toml`).
+- Se tiveres `printer.cfg`, compara os **pins** que ele usa para cada MCU com os de cada board do catálogo
+  e **sugere** as mais parecidas, com a percentagem. É uma sugestão, não uma certeza: revisões com
+  os mesmos pins (v1.0 / v1.1, EBB v1.1 / v1.2) ficam empatadas, e o programa diz-to.
+- **Sem `printer.cfg`, sem Moonraker e até sem Klipper instalado**, a descoberta funciona na mesma
+  com o que está ligado (USB, DFU, BOOTSEL, nós CAN) e escolhes o perfil à mão.
+
 ## Decisões de segurança
 
 - **Katapult só onde falta.** Regravar o Katapult numa board que já o tem é o passo mais arriscado.
@@ -142,6 +158,10 @@ Verificado contra o código real (Klipper e Katapult clonados pelo instalador):
   O Katapult pode ter VID/PID/serial personalizados no menuconfig.
 - Se o pedido de bootloader exige alguma opção no menuconfig do Klipper: as páginas lidas não mencionam nenhuma.
 - A regra "bridge por último" é raciocínio nosso, não está na documentação.
+- Catálogo e pins: testados só com ficheiros do Klipper (um clone recente) e subconjuntos aleatórios dos
+  pins de cada board: a board certa ficou no top 3 em quase todos os casos, em 1.º quando os pins a
+  distinguem. Nunca testado com um `printer.cfg` real nem com boards reais. O texto de cada board é
+  o do Klipper, não do fabricante.
 - Descoberta: o formato da resposta do Moonraker (`mcu_constants.MCU`, `mcu_version`) e se `CANBUS_BRIDGE`
   aparece nas constantes do MCU são **suposições** minhas, testadas só com respostas inventadas.
   Se o campo faltar, o chip fica "?" e nada falha. Também não confirmei que o driver do `can0` é `gs_usb`

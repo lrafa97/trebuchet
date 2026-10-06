@@ -8,7 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, detect, discover
+from . import __version__, catalog, detect, discover, pinmatch
 from .advisor import ERROR, INFO, WARN, Plan, advise
 from .builder import edit_config, load_build
 from .config import Settings
@@ -155,7 +155,8 @@ class App:
             if idx is None or idx == len(cands) + 1:
                 continue
             if idx == len(cands):
-                p = self.new_profile(chip=x.chip, interface=discover.profile_interface_for(x))
+                p = self.new_profile(chip=x.chip, interface=discover.profile_interface_for(x),
+                                     mcu_name=x.name)
                 if p is None:
                     continue
                 profs.append(p)
@@ -336,7 +337,8 @@ class App:
     # ------------------------------------------------------------------ perfis
     def profiles_menu(self) -> None:
         while True:
-            k = self.io.menu("Perfis de board", ["Listar perfis", "Criar perfil novo"])
+            k = self.io.menu("Perfis de board", ["Listar perfis", "Criar perfil novo",
+                                                 "Consultar o catálogo de boards (só leitura)"])
             if k is None:
                 return
             if k == 0:
@@ -351,13 +353,100 @@ class App:
                         self.io.say(f"     notas: {p.notes}")
                     for pr in probs:
                         self.io.warn(f"     {pr}")
-            else:
+            elif k == 1:
                 self.new_profile()
+            else:
+                self.pick_catalog_entry()
 
-    def new_profile(self, chip: str = "", interface: str = "") -> BoardProfile | None:
+    def pin_suggestions(self, mcu_name: str, chip_hint: str = "") -> list:
+        """Boards do catálogo que usam os pins que o printer.cfg declara para este MCU."""
+        cfg = self.s.printer_cfg or ""
+        path = discover.find_printer_cfg(cfg)
+        if not path:
+            return []
+        entries = catalog.load_catalog(self.s.klipper_dir, self.s.catalog_file)
+        return pinmatch.suggest(path, mcu_name, entries, chip_hint=chip_hint, top=5)
+
+    def show_suggestions(self, matches: list) -> None:
+        io = self.io
+        best = matches[0].score
+        io.say("\nPelos pins do printer.cfg, a board pode ser (é uma sugestão, não uma certeza):")
+        for m in matches:
+            tie = "  <- empate: os pins não as distinguem" if best - m.score < 0.02 and len(
+                [x for x in matches if best - x.score < 0.02]) > 1 else ""
+            io.say(f"  {m.score * 100:>3.0f}%  {m.entry.name}  [{', '.join(m.entry.chips)}]"
+                   f"  ({m.shared}/{m.total} pins){tie}")
+
+    def pick_catalog_entry(self, chip_hint: str = "", suggestions: list | None = None
+                           ) -> "tuple[catalog.CatalogEntry, str] | None":
+        """Escolhe uma board do catálogo (Klipper + <dados>/catalog.toml).
+        Devolve (entrada, chip escolhido) ou None."""
+        io = self.io
+        entries = catalog.load_catalog(self.s.klipper_dir, self.s.catalog_file)
+        usable = [e for e in entries if e.family in ("stm32", "rp2040")]
+        if not usable:
+            io.warn(f"Catálogo vazio: não encontrei boards em {self.s.klipper_dir / 'config'}. "
+                    "Cria o perfil do zero (ou acrescenta boards em catalog.toml).")
+            return None
+        hidden = len(entries) - len(usable)
+        e = None
+        if suggestions:
+            self.show_suggestions(suggestions)
+            si = io.choose("Qual destas é a tua?",
+                           [f"{m.entry.name}  [{', '.join(m.entry.chips)}]" for m in suggestions]
+                           + ["Nenhuma: escolher a marca e a board à mão"])
+            if si is None:
+                return None
+            if si < len(suggestions):
+                e = suggestions[si].entry
+        if e is None:
+            labels = dict(catalog.VENDORS)
+            labels[catalog.OTHER] = "Outras marcas"
+            vendors = [v for v in (*(k for k, _ in catalog.VENDORS), catalog.OTHER)
+                       if any(x.vendor == v for x in usable)]
+            vi = io.choose("Marca da board:", [f"{labels[v]}  ({sum(1 for x in usable if x.vendor == v)})"
+                                               for v in vendors])
+            if vi is None:
+                return None
+            pool = [x for x in usable if x.vendor == vendors[vi]]
+            core = discover.chip_core(chip_hint)
+            if core:
+                same = [x for x in pool if core in {discover.chip_core(c) for c in x.chips}]
+                if same:
+                    io.say(f"A mostrar só as boards com o chip visto ({core}).")
+                    pool = same
+            bi = io.choose("Board:", [f"{x.name}   [{', '.join(x.chips)}]" for x in pool])
+            if bi is None:
+                return None
+            e = pool[bi]
+        io.say(f"\nO que o Klipper diz sobre esta board ({Path(e.source).name}):")
+        for line in e.notes.splitlines():
+            io.say(f"  | {line}")
+        if hidden:
+            io.say(f"\n({hidden} boards do catálogo ficam fora da v1: AVR, LPC, SAM, ...)")
+        chip = e.chip
+        if len(e.chips) > 1:
+            ci = io.choose("O texto menciona vários chips (a board tem variantes). Qual é o da tua?",
+                           list(e.chips))
+            if ci is None:
+                return None
+            chip = e.chips[ci]
+        return e, chip
+
+    def new_profile(self, chip: str = "", interface: str = "", mcu_name: str = "") -> BoardProfile | None:
         """`chip` e `interface` vêm da descoberta: quando existem, não se pergunta outra vez."""
         io = self.io
-        name = io.ask("Nome da board (ex.: EBB42 1.2 BTT)")
+        entry = None
+        src = io.choose("Como queres criar o perfil?",
+                        ["A partir de uma board conhecida (catálogo do Klipper)", "Do zero"])
+        if src is None:
+            return None
+        if src == 0:
+            sugg = self.pin_suggestions(mcu_name, chip) if mcu_name else []
+            picked = self.pick_catalog_entry(chip, sugg)
+            if picked:
+                entry, chip = picked
+        name = io.ask("Nome da board (ex.: EBB42 1.2 BTT)", entry.name if entry else "")
         if not name:
             return None
         pid = slugify(io.ask("Identificador do perfil", slugify(name)))
@@ -376,6 +465,8 @@ class App:
         if interface in INTERFACES:
             io.say(f"Interface {interface} (do que está ligado).")
         else:
+            if entry:
+                io.say(f"Palpite pelo nome do ficheiro: {entry.interface_hint}. Confirma no texto acima.")
             if_i = io.choose("Interface com o Pi", list(INTERFACES))
             if if_i is None:
                 return None
@@ -389,7 +480,8 @@ class App:
             id=pid, name=name, mcu=mcu, family=family, interface=interface,
             first_katapult_method=FIRST_KATAPULT_METHODS[m_i], can_bitrate=bitrate, uart_baud=baud,
             dfu_heater_warning=io.confirm("Avisar para desligar aquecedores em DFU?", default=True),
-            notes=io.ask("Notas (opcional)"))
+            notes=io.ask("Notas (opcional)", (" ".join(entry.notes.split())[:400]
+                                              + f" [fonte: {Path(entry.source).name}]") if entry else ""))
         d = save_profile(self.s.profiles_dir, p)
         self._attach_config(p, d / "klipper.config", "klipper", required=True)
         self._attach_config(p, d / "katapult.config", "katapult", required=False)

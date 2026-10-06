@@ -482,6 +482,69 @@ class DiscoverTests(unittest.TestCase):
         self.assertFalse(d.bridge_unresolved)
         self.assertTrue(all(x.bridge is False for x in d.devices if x.transport == "can"))
 
+    def test_discover_works_without_any_klipper_config(self):
+        """Sem printer.cfg, sem Moonraker, sem Klipper instalado: só o que está ligado."""
+        from trebuchet import discover
+        lsusb = ("Bus 001 Device 004: ID 0483:df11 STMicroelectronics STM Device in DFU Mode\n"
+                 "Bus 001 Device 007: ID 2e8a:0003 Raspberry Pi RP2 Boot\n")
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            s, _ = make_env(tmp)
+            by_id = tmp / "by-id"
+            by_id.mkdir()
+            (by_id / "usb-Klipper_stm32f446xx_AAA111-if00").write_text("")
+            s.klipper_dir = tmp / "nao-existe"            # nem sequer há Klipper
+            def opener(url, timeout=0):
+                raise OSError("sem Moonraker")
+            d = discover.discover(s, self.FakeRunner(lsusb), by_id_dir=by_id,
+                                  sys_net=tmp / "net", opener=opener,
+                                  printer_cfg=str(tmp / "nao-existe.cfg"))
+        names = {x.name: x for x in d.devices}
+        self.assertEqual(set(names), {"stm32f446xx-A111", "dfu-1", "bootsel-1"})
+        self.assertEqual(names["bootsel-1"].chip, "rp2040")
+        self.assertEqual(names["dfu-1"].app, "dfu")
+        self.assertTrue(any("Sem printer.cfg" in n for n in d.notes))
+
+    def test_discover_flow_without_config_or_klipper_dir(self):
+        from trebuchet import discover
+        from trebuchet.menu import App
+
+        class IO(FakeIO):
+            def __init__(self, answers):
+                super().__init__(confirm=False)
+                self.answers = list(answers)
+            def title(self, t): pass
+            def ask(self, text, default=""):
+                return (self.answers.pop(0) if self.answers else "") or default
+            def choose(self, title, options):
+                return 0
+
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            s, _ = make_env(tmp)
+            s.klipper_dir = tmp / "nao-existe"
+            s.printer_cfg = str(tmp / "nao-existe.cfg")
+            by_id = tmp / "by-id"
+            by_id.mkdir()
+            (by_id / "usb-Klipper_stm32f446xx_AAA111-if00").write_text("")
+            make_profile(s, "octo", interface="usb", mcu="stm32f446")
+            io = IO(["maq", "", "s"])
+            app = App(s, io)
+            orig = discover.discover
+            discover.discover = lambda settings, runner, **kw: orig(
+                settings, runner, by_id_dir=by_id, sys_net=tmp / "net", **kw)
+            try:
+                m = app.discover_flow()
+            finally:
+                discover.discover = orig
+        self.assertIsNotNone(m)
+        self.assertEqual([b.profile_id for b in m.boards], ["octo"])
+
+    def test_catalog_empty_without_klipper_dir(self):
+        from trebuchet import catalog
+        with tempfile.TemporaryDirectory() as t:
+            self.assertEqual(catalog.load_catalog(Path(t) / "nao-existe", Path(t) / "c.toml"), [])
+
     def test_candidate_profiles_filters_by_interface_and_chip(self):
         from trebuchet import discover
         with tempfile.TemporaryDirectory() as t:
@@ -553,6 +616,99 @@ class DiscoverTests(unittest.TestCase):
         self.assertEqual(next(b for b in saved.boards if b.label == "mcu").chip, "stm32f446xx")
         self.assertEqual(next(b for b in saved.boards if b.label == "toolhead").uuid, "0123456789ab")
         self.assertEqual(app.reg.katapult("minha-maquina", "mcu"), "yes")
+
+
+class CatalogAndPinTests(unittest.TestCase):
+    def klipper_cfgs(self, tmp: Path) -> Path:
+        kd = tmp / "klipper"
+        (kd / "config").mkdir(parents=True)
+        (kd / "config" / "generic-bigtreetech-octopus-v1.1.cfg").write_text(
+            "# This file contains common pin mappings for the BigTreeTech Octopus\n"
+            "# v1.1 board. Compile for the STM32F446 with a \"32KiB bootloader\"\n"
+            "# (or STM32F429 if your board has it) and a \"12 MHz crystal\".\n"
+            "\n# See docs/Config_Reference.md for a description of parameters.\n"
+            "[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nenable_pin: !PF14\nendstop_pin: ^PG6\n"
+            "[stepper_y]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n"
+            "[heater_bed]\nheater_pin: PA1\nsensor_pin: PF3\n#commented_pin: PK9\n")
+        (kd / "config" / "generic-fysetc-spider.cfg").write_text(
+            "# This file contains common pin mappings for the Fysetc Spider board.\n"
+            "# To use this config, the firmware should be compiled for the STM32F446.\n"
+            "\n# See docs/Config_Reference.md for a description of parameters.\n"
+            "[stepper_x]\nstep_pin: PE11\ndir_pin: PE10\nenable_pin: !PE9\nendstop_pin: PB14\n"
+            "[heater_bed]\nheater_pin: PB4\nsensor_pin: PC4\n")
+        (kd / "config" / "generic-bigtreetech-skr-pico-v1.0.cfg").write_text(
+            "# pin mappings for the BIGTREETECH SKR Pico V1.0 board.\n"
+            "# compile for the RP2040 with USB communication.\n"
+            "\n# See docs/Config_Reference.md\n[stepper_x]\nstep_pin: gpio11\ndir_pin: gpio10\n")
+        (kd / "config" / "sample-macros.cfg").write_text("# macros, no board here\n[gcode_macro X]\n")
+        return kd
+
+    def test_catalog_parses_klipper_headers(self):
+        from trebuchet import catalog
+        with tempfile.TemporaryDirectory() as t:
+            kd = self.klipper_cfgs(Path(t))
+            es = {e.id: e for e in catalog.load_klipper_catalog(kd)}
+        self.assertEqual(set(es), {"generic-bigtreetech-octopus-v1.1", "generic-fysetc-spider",
+                                   "generic-bigtreetech-skr-pico-v1.0"})
+        octo = es["generic-bigtreetech-octopus-v1.1"]
+        self.assertEqual(octo.name, "BigTreeTech Octopus v1.1")
+        self.assertEqual(octo.chips, ("stm32f429", "stm32f446"))   # variantes: não escolhe sozinho
+        self.assertEqual(octo.chip, "")
+        self.assertEqual(es["generic-fysetc-spider"].chip, "stm32f446")
+        self.assertEqual(es["generic-bigtreetech-skr-pico-v1.0"].family, "rp2040")
+        self.assertNotIn("See docs", octo.notes)
+
+    def test_user_catalog_overrides_and_adds(self):
+        from trebuchet import catalog
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            kd = self.klipper_cfgs(tmp)
+            (tmp / "catalog.toml").write_text(
+                '[[board]]\nid = "fly-sb2040"\nvendor = "mellow"\nname = "Mellow Fly-SB2040"\n'
+                'chip = "rp2040"\ninterface = "can"\nsource = "https://exemplo"\n')
+            es = catalog.load_catalog(kd, tmp / "catalog.toml")
+        self.assertEqual(es[0].id, "fly-sb2040")
+        self.assertEqual((es[0].vendor, es[0].family, es[0].interface_hint), ("mellow", "rp2040", "can"))
+
+    def test_user_pins_per_mcu_with_include_modifiers_and_comments(self):
+        from trebuchet import pinmatch
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            (tmp / "extra").mkdir()
+            (tmp / "extra" / "th.cfg").write_text("[fan]\npin: toolhead:PB13\n")
+            cfg = tmp / "printer.cfg"
+            cfg.write_text("[include extra/*.cfg]\n[stepper_x]\nstep_pin: PF13\ndir_pin: !PF12\n"
+                           "endstop_pin: ^toolhead:PA3\n# step_pin: PK9\n"
+                           "[extruder]\nstep_pin: toolhead:PD0 # comentario PE5\n")
+            pins = pinmatch.user_pins(cfg)
+        self.assertEqual(pins["mcu"], {"PF13", "PF12"})
+        self.assertEqual(pins["toolhead"], {"PB13", "PA3", "PD0"})
+
+    def test_pin_ranking_exact_board_first_and_ties_are_reported(self):
+        from trebuchet import catalog, pinmatch
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            kd = self.klipper_cfgs(tmp)
+            es = catalog.load_klipper_catalog(kd)
+            user = {"PF13", "PF12", "PF14", "PG6", "PG0"}
+            r = pinmatch.rank(user, es)
+            self.assertEqual(r[0].entry.id, "generic-bigtreetech-octopus-v1.1")
+            self.assertEqual(r[0].score, 1.0)
+            self.assertEqual(r[0].shared, 5)
+            self.assertEqual(len(r), 1)                       # as outras não partilham nenhum pin
+            self.assertEqual(pinmatch.rank({"PF13", "PF12"}, es), [])        # poucos pins: sem palpite
+            rp = pinmatch.rank({"gpio11", "gpio10", "gpio1", "gpio2"}, es)
+            self.assertEqual(rp[0].entry.id, "generic-bigtreetech-skr-pico-v1.0")
+            only446 = pinmatch.rank(user, es, chip_hint="stm32f446xx")
+            self.assertTrue(all(m.entry.family == "stm32" for m in only446))
+            self.assertEqual(pinmatch.rank(user, es, chip_hint="rp2040xx"), [])
+
+    def test_app_pin_suggestions_without_cfg_are_empty(self):
+        from trebuchet.menu import App
+        with tempfile.TemporaryDirectory() as t:
+            s, _ = make_env(Path(t))
+            s.printer_cfg = str(Path(t) / "nao-existe.cfg")
+            self.assertEqual(App(s, FakeIO()).pin_suggestions("mcu"), [])
 
 
 class ProfileFromDiscoveryTests(unittest.TestCase):

@@ -245,7 +245,9 @@ def discover(settings, runner, *, printer_cfg: str = "", use_moonraker: bool = T
             elif c.serial:
                 devices.append(Device(c.name, "uart", device=c.serial, sources=["printer.cfg"]))
     else:
-        d.notes.append("printer.cfg não encontrado (defino o caminho em trebuchet.cfg, [paths] printer_cfg).")
+        d.notes.append("Sem printer.cfg: não faz mal, uso só o que está ligado agora "
+                       "(USB, DFU/BOOTSEL, nós CAN). Se tiveres um, define o caminho em "
+                       "trebuchet.cfg, [paths] printer_cfg.")
 
     # 2) USB agora
     scan = detect.scan_usb(runner, by_id_dir)
@@ -259,6 +261,12 @@ def discover(settings, runner, *, printer_cfg: str = "", use_moonraker: bool = T
         else:
             devices.append(Device(f"{s.mcu}-{s.serial[-4:]}", "usb", serial=s.serial, chip=s.mcu,
                                   present=True, app=s.app, sources=["usb"]))
+    # Boards em modo bootloader de ROM (DFU STM32 / BOOTSEL RP2040) não têm nome em by-id:
+    # vêm só do lsusb. Os IDs 0483:df11 e 2e8a:0003 são conhecimento geral (confirma com lsusb).
+    for kind, prefix, app, chip in (("stm32-dfu", "dfu", "dfu", ""), ("rp2040-bootsel", "bootsel", "bootsel", "rp2040")):
+        for i, _ in enumerate(scan.of_kind(kind), 1):
+            devices.append(Device(f"{prefix}-{i}", "usb", chip=chip, present=True, app=app,
+                                  sources=["lsusb"]))
     for x in devices:
         if x.transport == "usb" and x.present is None:
             x.present = False

@@ -17,6 +17,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("doctor", help="verifica ferramentas e caminhos")
     sub.add_parser("scan", help="lista dispositivos USB e estado do can0")
+    dc = sub.add_parser("discover", help="descobre o que está ligado e mostra a ordem de gravação")
+    dc.add_argument("--no-moonraker", action="store_true", help="não perguntar ao Moonraker")
+    dc.add_argument("--canbus-query", action="store_true",
+                    help="correr também o canbus_query (nós CAN sem id atribuído)")
     pl = sub.add_parser("plan", help="mostra o aconselhamento e o plano de uma máquina")
     pl.add_argument("machine")
     args = ap.parse_args(argv)
@@ -29,6 +33,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "scan":
         app.detect_menu()
         return 0
+    if args.cmd == "discover":
+        found = app.run_discovery(ask=False, canbus_query=args.canbus_query,
+                                  use_moonraker=not args.no_moonraker)
+        return 0 if found.devices else 1
     if args.cmd == "plan":
         wanted = slugify(args.machine)
         for m in list_machines(app.s.machines_dir):

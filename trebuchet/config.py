@@ -23,6 +23,8 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: _home() / "trebuchet_data")
     can_interface: str = "can0"
     klipper_service: str = "klipper"
+    printer_cfg: str = ""            # vazio = procurar nos sítios habituais
+    moonraker_url: str = "http://127.0.0.1:7125"
     dry_run: bool = False
     check_toolchain: bool = True      # os testes desligam isto
 
@@ -99,12 +101,17 @@ def load_settings(data_dir: str | None = None, dry_run: bool = False) -> Setting
                 s.klipper_dir = Path(sec["klipper_dir"]).expanduser()
             if "katapult_dir" in sec:
                 s.katapult_dir = Path(sec["katapult_dir"]).expanduser()
+            if "printer_cfg" in sec:
+                s.printer_cfg = str(Path(sec["printer_cfg"]).expanduser())
             if "klippy_env" in sec:
                 s.klippy_env = Path(sec["klippy_env"]).expanduser()
         if cp.has_section("can") and "interface" in cp["can"]:
             s.can_interface = cp["can"]["interface"]
-        if cp.has_section("services") and "klipper" in cp["services"]:
-            s.klipper_service = cp["services"]["klipper"]
+        if cp.has_section("services"):
+            if "klipper" in cp["services"]:
+                s.klipper_service = cp["services"]["klipper"]
+            if "moonraker_url" in cp["services"]:
+                s.moonraker_url = cp["services"]["moonraker_url"]
 
     s.dry_run = dry_run
     return s

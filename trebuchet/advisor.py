@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .discover import chip_matches
 from .profiles import (SUPPORTED_FAMILIES, BoardProfile, Machine, MachineBoard)
 
 ERROR, WARN, INFO = "erro", "aviso", "info"
@@ -82,6 +83,10 @@ def advise(machine: Machine, profiles: dict[str, BoardProfile],
         if p.family not in SUPPORTED_FAMILIES:
             add(ERROR, f"família '{p.family}' fora do âmbito da v1 (só stm32 e rp2040).", mb.label)
             continue
+        if mb.chip and chip_matches(p.mcu, mb.chip) is False:
+            add(ERROR, f"o chip visto na descoberta ({mb.chip}) não corresponde ao perfil '{p.id}' "
+                       f"({p.mcu}): perfil errado para esta board. Corrige o perfil, ou apaga o campo "
+                       "'chip' da máquina se o texto do perfil estiver só escrito de outra forma.", mb.label)
         if p.interface == "uart" and not mb.device:
             add(ERROR, "board UART sem caminho do dispositivo (campo 'device').", mb.label)
         if p.is_can and not _can_with_katapult_ok(p):

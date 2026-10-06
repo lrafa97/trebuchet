@@ -66,8 +66,9 @@ interface = can0
 1. **Perfis de board** (uma vez por modelo): MCU, interface, método do 1.º Katapult, bitrate CAN,
    e os ficheiros `.config` do Klipper (e do Katapult) que **já funcionam** nas tuas máquinas.
    Podes importar um `.config`, usar o atual de `~/klipper` ou abrir o menuconfig.
-2. **Nova máquina**: escolhes as boards do setup, identificas cada uma (UUID CAN / serial USB)
-   e dizes se já tem Katapult (sim / não / não sei).
+2. **Nova máquina**: ou **descobres** o que está ligado (`Máquinas > Descobrir`, ver abaixo), ou
+   escolhes as boards à mão e identificas cada uma (UUID CAN / serial USB). Em ambos dizes se
+   já tem Katapult (sim / não / não sei).
 3. **Assistente completo**:
    - aconselhamento e plano (erros bloqueiam o plano);
    - **constrói** Katapult (só boards sem ele) e Klipper, tudo antes de gravar qualquer coisa;
@@ -77,7 +78,22 @@ interface = can0
 `--dry-run` não grava boards nem mexe no serviço Klipper (as compilações correm na mesma).
 A compilação corre em `~/klipper` e `~/katapult` e apaga a pasta `out/` de cada um; o `.config`
 do perfil nunca é alterado (a build usa uma cópia).
-Comandos úteis sem menu: `treb doctor`, `treb scan`, `treb plan <máquina>`.
+Comandos úteis sem menu: `treb doctor`, `treb scan`, `treb discover`, `treb plan <máquina>`.
+
+## Descoberta automática
+
+`treb discover` (ou `Máquinas > Descobrir`) junta várias fontes numa só tabela, da mais segura para a mais invasiva:
+
+1. `printer.cfg` e os `[include]` (`~/printer_data/config/` ou `~/klipper_config/`; muda com `printer_cfg` em `trebuchet.cfg`): nomes, `canbus_uuid`, `serial`.
+2. `/dev/serial/by-id`: boards USB ligadas agora e o chip (vem no nome).
+3. Moonraker (só leitura, `moonraker_url` em `[services]`): chip e versão dos MCU declarados.
+4. `can0`: se o driver é `gs_usb` há uma bridge Klipper; com outro driver (MCP2515, etc.) nenhuma board é ponte.
+5. `canbus_query` (só com `--canbus-query`): nós CAN ainda sem id atribuído.
+
+O que **não** se descobre: o modelo da board (vários partilham o MCU) e se já tem Katapult. Por isso
+escolhes o perfil de cada board; o chip só filtra a lista e fica gravado na máquina: se o chip não
+corresponder ao perfil, o plano **bloqueia** (protege contra gravar a board errada).
+A ordem proposta: boards fora do CAN, nós CAN, ponte por último.
 
 ## Decisões de segurança
 
@@ -126,6 +142,10 @@ Verificado contra o código real (Klipper e Katapult clonados pelo instalador):
   O Katapult pode ter VID/PID/serial personalizados no menuconfig.
 - Se o pedido de bootloader exige alguma opção no menuconfig do Klipper: as páginas lidas não mencionam nenhuma.
 - A regra "bridge por último" é raciocínio nosso, não está na documentação.
+- Descoberta: o formato da resposta do Moonraker (`mcu_constants.MCU`, `mcu_version`) e se `CANBUS_BRIDGE`
+  aparece nas constantes do MCU são **suposições** minhas, testadas só com respostas inventadas.
+  Se o campo faltar, o chip fica "?" e nada falha. Também não confirmei que o driver do `can0` é `gs_usb`
+  numa bridge Klipper (o programa lê `/sys/class/net/<iface>/device/driver`).
 - O programa **não verifica** que o offset de bootloader do Klipper coincide com o offset da aplicação do Katapult.
 
 ## Testes

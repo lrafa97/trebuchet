@@ -168,10 +168,11 @@ class MachineBoard:
     uuid: str = ""                # canbus_uuid (12 hex) para nós CAN / bridge
     serial: str = ""              # serial USB (parte final do nome em by-id)
     device: str = ""              # caminho explícito (obrigatório em UART)
+    chip: str = ""                # MCU visto na descoberta (ex.: stm32f446xx); valida o perfil
 
     def to_dict(self) -> dict:
         return {"label": self.label, "profile": self.profile_id, "uuid": self.uuid,
-                "serial": self.serial, "device": self.device}
+                "serial": self.serial, "device": self.device, "chip": self.chip}
 
 
 @dataclass
@@ -201,7 +202,7 @@ def load_machine(path: Path) -> Machine:
         MachineBoard(
             label=b["label"], profile_id=b.get("profile", ""),
             uuid=b.get("uuid", "").lower(), serial=b.get("serial", ""),
-            device=b.get("device", ""),
+            device=b.get("device", ""), chip=b.get("chip", ""),
         )
         for b in data.get("board", [])
     ]

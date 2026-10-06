@@ -18,7 +18,7 @@ from trebuchet.flasher import Flasher  # noqa: E402
 from trebuchet.profiles import (BoardProfile, Machine, MachineBoard, list_machines,  # noqa: E402
                           list_profiles, load_machine, save_machine, save_profile)
 from trebuchet.registry import Registry  # noqa: E402
-from trebuchet.runner import Runner  # noqa: E402
+from trebuchet.runner import Result, Runner  # noqa: E402
 
 MAKEFILE = """\
 KCONFIG_CONFIG ?= .config
@@ -348,6 +348,209 @@ class CLI(unittest.TestCase):
         r = self.run_cli(["doctor"])
         self.assertIn("Diagnóstico", r.stdout)
         self.assertIn("Python >= 3.8", r.stdout)
+
+
+class DiscoverTests(unittest.TestCase):
+    CFG = (
+        "[include extra/*.cfg]\n"
+        "[mcu]\n"
+        "serial: /dev/serial/by-id/usb-Klipper_stm32f446xx_AAA111-if00  # principal\n"
+        "[mcu toolhead]\n"
+        "canbus_uuid: 0123456789AB\n"
+        "[mcu rpi]\n"
+        "serial: /tmp/klipper_host_mcu\n"
+        "[printer]\nkinematics: corexy\n"
+        "#*# <---------------------- SAVE_CONFIG ---------------------->\n"
+    )
+    EXTRA = "[mcu chamber]\ncanbus_uuid = ba98765432ff\ncanbus_interface: can0\n"
+
+    class FakeRunner:
+        def __init__(self, lsusb=""):
+            self.lsusb, self.calls = lsusb, []
+
+        def run(self, cmd, **kw):
+            self.calls.append(list(cmd))
+            return Result(list(cmd), 0, self.lsusb if cmd[0] == "lsusb" else "")
+
+    def env(self, tmp: Path):
+        cfgdir = tmp / "config"
+        (cfgdir / "extra").mkdir(parents=True)
+        (cfgdir / "printer.cfg").write_text(self.CFG)
+        (cfgdir / "extra" / "chamber.cfg").write_text(self.EXTRA)
+        by_id = tmp / "by-id"
+        by_id.mkdir()
+        (by_id / "usb-Klipper_stm32f446xx_AAA111-if00").write_text("")
+        (by_id / "usb-katapult_rp2040_ZZZ999-if00").write_text("")
+        s, _ = make_env(tmp)
+        return s, cfgdir / "printer.cfg", by_id
+
+    def test_parse_cfg_with_include_and_comments(self):
+        from trebuchet import discover
+        with tempfile.TemporaryDirectory() as t:
+            _, cfg, _ = self.env(Path(t))
+            mcus = {m.name: m for m in discover.parse_klipper_cfg(cfg)}
+        self.assertEqual(set(mcus), {"mcu", "toolhead", "rpi", "chamber"})
+        self.assertEqual(mcus["mcu"].serial, "/dev/serial/by-id/usb-Klipper_stm32f446xx_AAA111-if00")
+        self.assertEqual(mcus["toolhead"].uuid, "0123456789ab")
+        self.assertEqual(mcus["chamber"].uuid, "ba98765432ff")
+        self.assertEqual(mcus["chamber"].canbus_interface, "can0")
+
+    def test_include_loop_does_not_hang(self):
+        from trebuchet import discover
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "a.cfg"
+            f.write_text("[include a.cfg]\n[mcu]\ncanbus_uuid: 111111111111\n")
+            self.assertEqual(len(discover.parse_klipper_cfg(f)), 1)
+
+    def test_moonraker_parser(self):
+        from trebuchet import discover
+        body = ('{"result": {"status": {"mcu": {"mcu_version": "v0.12.0-1", "mcu_constants": '
+                '{"MCU": "stm32f446xx", "CANBUS_BRIDGE": 1}}, "mcu toolhead": {"mcu_version": "v0.12.0-1", '
+                '"mcu_constants": {"MCU": "stm32g0b1xx"}}, "toolhead": {}}}}')
+        info = discover.parse_moonraker_mcus(body)
+        self.assertEqual(info["mcu"].chip, "stm32f446xx")
+        self.assertTrue(info["mcu"].bridge)
+        self.assertEqual(info["toolhead"].chip, "stm32g0b1xx")
+        self.assertIsNone(info["toolhead"].bridge)
+        self.assertEqual(discover.parse_moonraker_mcus("lixo"), {})
+        self.assertEqual(discover.parse_moonraker_mcus('{"result": {}}'), {})
+
+    def test_chip_matches(self):
+        from trebuchet.discover import chip_matches
+        self.assertTrue(chip_matches("stm32f446", "stm32f446xx"))
+        self.assertTrue(chip_matches("STM32F446 (Octopus)", "stm32f446xx"))
+        self.assertFalse(chip_matches("stm32f446", "stm32g0b1xx"))
+        self.assertTrue(chip_matches("rp2040", "rp2040"))
+        self.assertIsNone(chip_matches("lpc1769", "lpc1769"))   # fora do âmbito: não bloqueia
+        self.assertIsNone(chip_matches("", "stm32f446xx"))
+
+    def run_discover(self, tmp, *, driver, moonraker_body=None):
+        from trebuchet import discover
+        s, cfg, by_id = self.env(tmp)
+        sys_net = tmp / "net"
+        if driver is not None:
+            (sys_net / "can0").mkdir(parents=True)
+            if driver:
+                drv = tmp / "drivers" / driver
+                drv.mkdir(parents=True)
+                (sys_net / "can0" / "device").mkdir()
+                (sys_net / "can0" / "device" / "driver").symlink_to(drv)
+
+        class Resp:
+            def __init__(self, b): self.b = b
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return self.b.encode()
+
+        def opener(url, timeout=0):
+            if moonraker_body is None:
+                raise OSError("sem Moonraker")
+            return Resp(moonraker_body)
+
+        return discover.discover(s, self.FakeRunner(), printer_cfg=str(cfg), by_id_dir=by_id,
+                                 sys_net=sys_net, opener=opener)
+
+    def test_discover_bridge_unresolved_with_gs_usb(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = self.run_discover(Path(t), driver="gs_usb")
+        names = {x.name: x for x in d.devices}
+        self.assertEqual(set(names), {"mcu", "toolhead", "chamber", "rp2040-Z999"})
+        self.assertTrue(names["mcu"].present)                    # USB visto em by-id
+        self.assertEqual(names["mcu"].chip, "stm32f446xx")
+        self.assertEqual(names["rp2040-Z999"].app, "katapult")
+        self.assertTrue(d.bridge_unresolved)
+        self.assertFalse(d.moonraker)
+        from trebuchet import discover
+        self.assertIn("ponte?", discover.render(d))
+
+    def test_discover_marks_bridge_from_moonraker_and_orders_last(self):
+        from trebuchet import discover
+        body = ('{"result": {"status": {"mcu toolhead": {"mcu_version": "v1", "mcu_constants": '
+                '{"MCU": "stm32g0b1xx", "CANBUS_BRIDGE": 1}}, "mcu chamber": {"mcu_version": "v1", '
+                '"mcu_constants": {"MCU": "stm32f072xb"}}}}}')
+        with tempfile.TemporaryDirectory() as t:
+            d = self.run_discover(Path(t), driver="gs_usb", moonraker_body=body)
+        self.assertFalse(d.bridge_unresolved)
+        order = [x.name for x in discover.flash_order(d.devices)]
+        self.assertEqual(order[-1], "toolhead")                  # ponte em último
+        self.assertLess(order.index("mcu"), order.index("chamber"))   # USB antes do CAN
+        self.assertEqual({x.name: x.chip for x in d.devices}["chamber"], "stm32f072xb")
+
+    def test_discover_non_bridge_adapter_means_no_bridge(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = self.run_discover(Path(t), driver="mcp251x")
+        self.assertFalse(d.bridge_unresolved)
+        self.assertTrue(all(x.bridge is False for x in d.devices if x.transport == "can"))
+
+    def test_candidate_profiles_filters_by_interface_and_chip(self):
+        from trebuchet import discover
+        with tempfile.TemporaryDirectory() as t:
+            s, _ = make_env(Path(t))
+            ps = [make_profile(s, "octo", interface="usb", mcu="stm32f446"),
+                  make_profile(s, "ebb", interface="can", mcu="stm32g0b1", bitrate=1000000),
+                  make_profile(s, "ebb-old", interface="can", mcu="stm32f072", bitrate=1000000),
+                  make_profile(s, "ponte", interface="usb-can-bridge", mcu="stm32g0b1", bitrate=1000000)]
+        can = discover.Device("th", "can", uuid="0123456789ab", chip="stm32g0b1xx")
+        self.assertEqual([p.id for p in discover.candidate_profiles(can, ps)], ["ebb"])
+        can.bridge = True
+        self.assertEqual([p.id for p in discover.candidate_profiles(can, ps)], ["ponte"])
+        usb = discover.Device("m", "usb", serial="A", chip="stm32f446xx")
+        self.assertEqual([p.id for p in discover.candidate_profiles(usb, ps)], ["octo"])
+
+    def test_advisor_blocks_chip_mismatch(self):
+        with tempfile.TemporaryDirectory() as t:
+            s, _ = make_env(Path(t))
+            p = make_profile(s, "octo", interface="usb", mcu="stm32f446")
+            m = Machine(name="x", boards=[MachineBoard(label="main", profile_id=p.id,
+                                                       chip="stm32g0b1xx")])
+            plan = advise(m, {p.id: p}, {"main": "yes"})
+        self.assertTrue(plan.has_errors)
+        self.assertTrue(any("não corresponde" in a.text for a in plan.advice))
+
+    def test_machine_chip_roundtrip(self):
+        with tempfile.TemporaryDirectory() as t:
+            m = Machine(name="x", boards=[MachineBoard(label="a", profile_id="p", chip="stm32f446xx")])
+            path = save_machine(Path(t), m)
+            self.assertEqual(load_machine(path).boards[0].chip, "stm32f446xx")
+
+    def test_discover_flow_creates_machine(self):
+        from trebuchet import discover
+        from trebuchet.menu import App
+
+        class ScriptedIO(FakeIO):
+            def __init__(self, answers):
+                super().__init__(confirm=False)
+                self.answers, self.titles = list(answers), []
+
+            def title(self, t): self.titles.append(t)
+            def ask(self, text, default=""):
+                return (self.answers.pop(0) if self.answers else "") or default
+            def choose(self, title, options):
+                self.lines.append(f"CHOOSE {title} -> {options}")
+                return 0   # primeira opção: o perfil sugerido
+
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            s, cfg, by_id = self.env(tmp)
+            s.printer_cfg = str(cfg)
+            make_profile(s, "octo", interface="usb", mcu="stm32f446")
+            make_profile(s, "ebb", interface="can", mcu="stm32g0b1", bitrate=1000000)
+            io = ScriptedIO(["minha-maquina", "", "s", "", "n", "", "n"])
+            app = App(s, io)
+            orig = discover.discover
+            discover.discover = lambda settings, runner, **kw: orig(
+                settings, runner, by_id_dir=by_id, sys_net=tmp / "net", **kw)
+            try:
+                m = app.discover_flow()
+            finally:
+                discover.discover = orig
+            labels = [b.label for b in m.boards]
+            saved = load_machine(s.machines_dir / "minha-maquina.toml")
+        self.assertIn("mcu", labels)
+        self.assertIn("toolhead", labels)
+        self.assertEqual(next(b for b in saved.boards if b.label == "mcu").chip, "stm32f446xx")
+        self.assertEqual(next(b for b in saved.boards if b.label == "toolhead").uuid, "0123456789ab")
+        self.assertEqual(app.reg.katapult("minha-maquina", "mcu"), "yes")
 
 
 class TomlMiniTests(unittest.TestCase):

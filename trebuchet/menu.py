@@ -8,7 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, detect
+from . import __version__, detect, discover
 from .advisor import ERROR, INFO, WARN, Plan, advise
 from .builder import edit_config, load_build
 from .config import Settings
@@ -93,16 +93,80 @@ class App:
         while True:
             ms = list_machines(self.s.machines_dir)
             entries = [(str(i), f"{m.name}  ({len(m.boards)} boards)") for i, m in enumerate(ms, 1)]
-            entries.append(("n", "Nova máquina (escolher as boards do setup)"))
+            entries.append(("d", "Descobrir o que está ligado e criar a máquina (automático)"))
+            entries.append(("n", "Nova máquina (escolher as boards à mão)"))
             k = self.io.menu("Máquinas", entries)
             if k in ("b", "q"):
                 return
-            if k == "n":
+            if k == "d":
+                m = self.discover_flow()
+                if m:
+                    self.machine_menu(m)
+            elif k == "n":
                 m = self.new_machine()
                 if m:
                     self.machine_menu(m)
             else:
                 self.machine_menu(ms[int(k) - 1])
+
+    def run_discovery(self, *, ask: bool = True, canbus_query: bool = False,
+                      use_moonraker: bool = True) -> "discover.Discovery":
+        io = self.io
+        if ask:
+            use_moonraker = io.confirm("Perguntar ao Moonraker o chip e a versão de cada MCU? "
+                                       "(só leitura; precisa do Klipper a correr)", default=True)
+            canbus_query = io.confirm("Correr também o canbus_query? (só vê nós CAN ainda sem id; "
+                                      "com o Klipper a correr não mostra os já declarados)", default=False)
+        found = discover.discover(self.s, self.runner, use_moonraker=use_moonraker,
+                                  canbus_query=canbus_query)
+        io.title("O que encontrei")
+        io.say(discover.render(found))
+        return found
+
+    def discover_flow(self) -> Machine | None:
+        io = self.io
+        found = self.run_discovery()
+        if not found.devices:
+            io.warn("Não encontrei nenhuma board. Cria a máquina à mão ou liga as boards e tenta de novo.")
+            io.pause()
+            return None
+        if found.bridge_unresolved:
+            can = [x for x in found.devices if x.transport == "can"]
+            idx = io.choose("Qual destas é a ponte USB-CAN (a board ligada por USB ao Pi)?",
+                            [f"{x.name}  ({x.uuid})" for x in can] + ["nenhuma / não sei"])
+            if idx is not None and idx < len(can):
+                can[idx].bridge = True
+        name = io.ask("Nome da máquina (ex.: cliente-voron)")
+        if not name:
+            return None
+        m = Machine(name=name, can_interface=self.s.can_interface)
+        profs = list(self.profiles().values())
+        io.say("\nAgora diz-me que board é cada uma. O chip serve para filtrar os perfis; "
+               "não adivinho o modelo.")
+        for x in discover.flash_order(found.devices):
+            cands = discover.candidate_profiles(x, profs)
+            ident = x.uuid or x.serial or x.device
+            opts = [f"{p.name}  [{p.mcu}, {p.interface}]" for p in cands] + ["(ignorar esta board)"]
+            idx = io.choose(f"{x.name}: {x.transport}, chip {x.chip or '?'}, {ident}", opts)
+            if idx is None or idx >= len(cands):
+                continue
+            p = cands[idx]
+            label = slugify(io.ask("Nome desta board na máquina", x.name))
+            if m.board(label):
+                io.warn("Já existe uma board com esse nome; ignorada.")
+                continue
+            m.boards.append(MachineBoard(label=label, profile_id=p.id, uuid=x.uuid,
+                                         serial=x.serial, device=x.device,
+                                         chip=x.chip))
+            k = io.ask("Esta board já tem Katapult? (s = sim, n = não, ? = não sei)", "?").lower()
+            self.reg.set_katapult(m.slug, label, {"s": "yes", "n": "no"}.get(k[:1], "unknown"))
+        if not m.boards:
+            io.warn("Nenhuma board ficou na máquina; nada guardado.")
+            return None
+        self.save(m)
+        io.ok(f"Máquina '{m.name}' guardada com {len(m.boards)} boards.")
+        self.show_plan(self.plan_for(m))
+        return m
 
     def new_machine(self) -> Machine | None:
         io = self.io

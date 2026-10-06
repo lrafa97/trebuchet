@@ -1,14 +1,14 @@
-"""Sugere que board é, comparando os pins do printer.cfg com os pins de cada board do catálogo.
+"""Suggest which board this is, by comparing the pins in printer.cfg with the pins of each catalog board.
 
-Ideia: os ficheiros `config/generic-*.cfg` do Klipper declaram os pins de cada board. Se o
-printer.cfg do utilizador usa pins de um MCU, vemos que boards do catálogo têm esses pins.
+Idea: Klipper's `config/generic-*.cfg` files declare each board's pins. If the user's
+printer.cfg uses pins of an MCU, we look for catalog boards that have those pins.
 
-Limites (a mostrar ao utilizador, não a esconder):
-  - isto SUGERE, nunca decide: revisões com os mesmos pins (v1.0/v1.1) são indistinguíveis;
-  - boards "maiores" contêm os pins das mais pequenas da mesma família (Octopus Pro vs Octopus);
-  - se o printer.cfg usa aliases (`[board_pins]`) ou poucos pins, há pouca informação;
-  - só cobre boards com ficheiro no Klipper e MCUs STM32/RP2040 (pins PA0..PK15, gpioN).
-O chip, quando se conhece, reduz muito os candidatos: usa-se para filtrar antes de pontuar.
+Limits (to show the user, not hide):
+  - this SUGGESTS, never decides: revisions with the same pins (v1.0/v1.1) are indistinguishable;
+  - "bigger" boards contain the pins of smaller ones in the same family (Octopus Pro vs Octopus);
+  - if printer.cfg uses aliases (`[board_pins]`) or few pins, there is little information;
+  - only covers boards with a Klipper file and STM32/RP2040 MCUs (pins PA0..PK15, gpioN).
+When the chip is known it narrows the candidates a lot: it is used to filter before scoring.
 """
 from __future__ import annotations
 
@@ -22,15 +22,15 @@ from typing import Optional
 from . import catalog, discover
 
 _PIN = re.compile(r"(?<![\w])[!^~<>=]*(?:(?P<chip>[A-Za-z_]\w*):)?(?P<pin>P[A-K]\d{1,2}|gpio\d{1,2})\b")
-MIN_PINS = 4          # com menos pins do que isto a comparação não vale nada
+MIN_PINS = 4          # with fewer pins than this the comparison is worthless
 
 
 @dataclass
 class Match:
     entry: catalog.CatalogEntry
-    score: float            # 0..1, ponderado: pins raros pesam mais
-    shared: int             # pins do utilizador que a board também tem
-    total: int              # pins do utilizador usados na comparação
+    score: float            # 0..1, weighted: rare pins count more
+    shared: int             # user pins that the board also has
+    total: int              # user pins used in the comparison
 
 
 def _active_text(path: Path) -> str:
@@ -47,7 +47,7 @@ def _active_text(path: Path) -> str:
 
 
 def pins_in_text(text: str) -> dict[str, set]:
-    """{nome do mcu ('' = o principal): {pins}}. O prefixo `mcu:` decide a que MCU pertence."""
+    """{mcu name ('' = the main one): {pins}}. The `mcu:` prefix decides which MCU a pin belongs to."""
     out: dict[str, set] = {}
     for m in _PIN.finditer(text):
         out.setdefault(m.group("chip") or "", set()).add(m.group("pin").upper()
@@ -56,7 +56,7 @@ def pins_in_text(text: str) -> dict[str, set]:
 
 
 def user_pins(printer_cfg: Path) -> dict[str, set]:
-    """Pins usados no printer.cfg e nos seus [include], por MCU ('mcu' = o principal)."""
+    """Pins used in printer.cfg and its [include]s, per MCU ('mcu' = the main one)."""
     texts: list[str] = []
     seen: set = set()
 
@@ -93,7 +93,7 @@ def board_pins(entry: catalog.CatalogEntry) -> set:
 
 
 def rank(pins: set, entries: list, *, chip_hint: str = "", top: int = 3) -> list:
-    """Pontua as boards do catálogo. Cada pin vale mais quanto menos boards o têm (IDF)."""
+    """Score the catalog boards. Each pin is worth more the fewer boards have it (IDF)."""
     if len(pins) < MIN_PINS:
         return []
     core = discover.chip_core(chip_hint)
@@ -115,7 +115,7 @@ def rank(pins: set, entries: list, *, chip_hint: str = "", top: int = 3) -> list
     n = len(pool)
 
     def w(p: str) -> float:
-        return math.log(1 + n / df.get(p, 1)) if p in df else 1.0   # pin que nenhuma board tem: pesa, mas só no denominador
+        return math.log(1 + n / df.get(p, 1)) if p in df else 1.0   # pin no board has: it counts, but only in the denominator
 
     total_w = sum(w(p) for p in pins)
     results = []
@@ -123,7 +123,7 @@ def rank(pins: set, entries: list, *, chip_hint: str = "", top: int = 3) -> list
         shared = pins & bp
         score = sum(w(p) for p in shared) / total_w if total_w else 0.0
         results.append(Match(e, round(score, 3), len(shared), len(pins)))
-    # empate de pontuação: a board com menos pins no total é a mais "justa" ao que se usa
+    # score tie: the board with fewer pins in total is the tighter fit for what is used
     results.sort(key=lambda m: (-m.score, len(board_pins(m.entry))))
     return [m for m in results[:top] if m.score > 0]
 

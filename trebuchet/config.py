@@ -1,7 +1,7 @@
-"""Definições e caminhos.
+"""Settings and paths.
 
-Ordem de precedência: valores por defeito < ficheiro trebuchet.cfg < variáveis de ambiente
-< argumentos da linha de comandos.
+Precedence, lowest to highest: defaults < trebuchet.cfg file < environment variables
+< command-line arguments.
 """
 from __future__ import annotations
 
@@ -23,12 +23,12 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: _home() / "trebuchet_data")
     can_interface: str = "can0"
     klipper_service: str = "klipper"
-    printer_cfg: str = ""            # vazio = procurar nos sítios habituais
+    printer_cfg: str = ""            # empty = look in the usual places
     moonraker_url: str = "http://127.0.0.1:7125"
     dry_run: bool = False
-    check_toolchain: bool = True      # os testes desligam isto
+    check_toolchain: bool = True      # tests turn this off
 
-    # --- diretorias derivadas -------------------------------------------------
+    # --- derived directories -------------------------------------------------
     @property
     def profiles_dir(self) -> Path:
         return self.data_dir / "profiles"
@@ -62,15 +62,15 @@ class Settings:
                   self.builds_dir, self.logs_dir):
             d.mkdir(parents=True, exist_ok=True)
 
-    # --- ferramentas ---------------------------------------------------------
+    # --- tools ---------------------------------------------------------
     def klippy_python(self) -> str:
-        """Python do klippy-env (tem python-can); cai para python3 se não existir."""
+        """Python from klippy-env (has python-can); falls back to python3 if missing."""
         cand = self.klippy_env / "bin" / "python"
         return str(cand) if cand.exists() else "python3"
 
     def flashtool_candidates(self) -> list[Path]:
-        # Os caminhos dentro de lib/katapult do Klipper são palpites: confirmar na
-        # instalação real (ver README).
+        # The paths inside Klipper's lib/katapult are guesses: confirm on a
+        # real installation (see README).
         return [
             self.katapult_dir / "scripts" / "flashtool.py",
             self.klipper_dir / "lib" / "katapult" / "scripts" / "flashtool.py",

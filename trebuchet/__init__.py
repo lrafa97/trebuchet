@@ -1,7 +1,7 @@
 """Trebuchet - Klipper Flash Helper.
 
-Menu numerado (estilo KIAUH) para construir e gravar firmware Klipper/Katapult
-em boards stm32 e rp2040, com ordem de gravação segura para máquinas CAN.
+Numbered menu (KIAUH style) to build and flash Klipper/Katapult firmware
+on stm32 and rp2040 boards, with a safe flashing order for CAN machines.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

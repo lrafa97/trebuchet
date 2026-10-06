@@ -1,4 +1,4 @@
-"""Execução do plano: constrói tudo primeiro, grava depois, pára à primeira falha."""
+"""Plan execution: build everything first, flash afterwards, stop at the first failure."""
 from __future__ import annotations
 
 from typing import Callable
@@ -31,7 +31,7 @@ def execute_plan(plan: Plan, machine: Machine, profiles: dict[str, BoardProfile]
         io.error(msg)
         remaining = steps[done:]
         if remaining:
-            io.say("\nNada mais foi executado. Passos que ficaram por fazer:")
+            io.say("\nNothing else was run. Steps left undone:")
             for st in remaining:
                 io.say(f"  - {st.text}")
         return False
@@ -55,12 +55,12 @@ def execute_plan(plan: Plan, machine: Machine, profiles: dict[str, BoardProfile]
                                          machine_slug=machine.slug, label=mb.label)
                 except BuildError as exc:
                     return fail(str(exc))
-                io.ok(f"{kind} construído ({res.source_version}) em {res.dest}")
+                io.ok(f"{kind} built ({res.source_version}) in {res.dest}")
 
             elif step.kind == "first_katapult":
                 kat = load_build(settings, machine.slug, mb.label, "katapult")
                 if kat is None:
-                    return fail(f"não há build do Katapult para '{mb.label}'. Constrói primeiro.")
+                    return fail(f"no Katapult build for '{mb.label}'. Build it first.")
                 r = flasher.first_katapult(machine, mb, p, kat)
                 if not r.ok:
                     return fail(f"'{mb.label}': {r.message}")
@@ -78,7 +78,7 @@ def execute_plan(plan: Plan, machine: Machine, profiles: dict[str, BoardProfile]
             elif step.kind == "flash_klipper":
                 build = load_build(settings, machine.slug, mb.label, "klipper")
                 if build is None:
-                    return fail(f"não há build do Klipper para '{mb.label}'. Constrói primeiro.")
+                    return fail(f"no Klipper build for '{mb.label}'. Build it first.")
                 r = flasher.flash_klipper(machine, mb, p, build)
                 if not r.ok:
                     return fail(f"'{mb.label}': {r.message}")
@@ -94,5 +94,5 @@ def execute_plan(plan: Plan, machine: Machine, profiles: dict[str, BoardProfile]
         return True
     finally:
         if stopped_service:
-            if io.confirm("\nO serviço Klipper ficou parado. Arrancá-lo outra vez?", default=True):
+            if io.confirm("\nThe Klipper service is stopped. Start it again?", default=True):
                 flasher.start_service()

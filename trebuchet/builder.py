@@ -1,9 +1,9 @@
-"""Compilação de Klipper e Katapult a partir de ficheiros .config guardados.
+"""Build Klipper and Katapult from stored .config files.
 
-Usa o sistema de build do próprio projeto (`make KCONFIG_CONFIG=<ficheiro> ...`)
-sobre uma CÓPIA do .config do perfil, para o `olddefconfig` nunca alterar o
-ficheiro guardado. Os artefactos são copiados para
-<data>/builds/<máquina>/<board>/<klipper|katapult>/ com um build.json.
+Uses the project's own build system (`make KCONFIG_CONFIG=<file> ...`) on a
+COPY of the profile's .config, so `olddefconfig` never modifies the stored
+file. Artifacts are copied to
+<data>/builds/<machine>/<board>/<klipper|katapult>/ with a build.json.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class BuildResult:
     kind: str
     dest: Path
     artifacts: dict[str, Path] = field(default_factory=dict)
-    source_version: str = "desconhecida"
+    source_version: str = "unknown"
 
     @property
     def bin(self) -> Path | None:
@@ -65,7 +65,7 @@ def build_dest(settings: Settings, machine_slug: str, label: str, kind: str) -> 
 
 
 def load_build(settings: Settings, machine_slug: str, label: str, kind: str) -> BuildResult | None:
-    """Devolve a última build guardada, se existir e estiver completa."""
+    """Return the last stored build, if it exists and is complete."""
     dest = build_dest(settings, machine_slug, label, kind)
     meta = dest / "build.json"
     if not meta.exists():
@@ -78,27 +78,27 @@ def load_build(settings: Settings, machine_slug: str, label: str, kind: str) -> 
             if (dest / name).exists()}
     if not arts:
         return None
-    return BuildResult(kind, dest, arts, info.get("source_version", "desconhecida"))
+    return BuildResult(kind, dest, arts, info.get("source_version", "unknown"))
 
 
 def build_firmware(settings: Settings, runner: Runner, *, kind: str,
                    profile: BoardProfile, machine_slug: str, label: str) -> BuildResult:
     if kind not in ("klipper", "katapult"):
-        raise BuildError(f"tipo de firmware desconhecido: {kind}")
+        raise BuildError(f"unknown firmware type: {kind}")
 
     repo = _repo_for(settings, kind)
     if not (repo / "Makefile").exists():
-        raise BuildError(f"não encontro o {kind} em {repo} (falta Makefile)")
+        raise BuildError(f"cannot find {kind} in {repo} (Makefile missing)")
 
     src_cfg = _config_for(profile, kind)
     if not src_cfg.exists():
-        raise BuildError(f"o perfil '{profile.id}' não tem {src_cfg.name}")
+        raise BuildError(f"profile '{profile.id}' has no {src_cfg.name}")
 
     if (settings.check_toolchain and profile.family in ("stm32", "rp2040")
             and shutil.which("arm-none-eabi-gcc") is None):
-        raise BuildError("falta o compilador arm-none-eabi-gcc. Instala com:\n"
+        raise BuildError("the arm-none-eabi-gcc compiler is missing. Install it with:\n"
                          "  sudo apt install gcc-arm-none-eabi binutils-arm-none-eabi "
-                         "libnewlib-arm-none-eabi\n(ou corre o install.sh)")
+                         "libnewlib-arm-none-eabi\n(or run install.sh)")
 
     work = settings.builds_dir / "_work"
     work.mkdir(parents=True, exist_ok=True)
@@ -107,11 +107,11 @@ def build_firmware(settings: Settings, runner: Runner, *, kind: str,
 
     base = ["make", f"KCONFIG_CONFIG={cfg}"]
     for step, extra in (("clean", ["clean"]), ("olddefconfig", ["olddefconfig"]),
-                        ("compilar", [f"-j{os.cpu_count() or 2}"])):
+                        ("compile", [f"-j{os.cpu_count() or 2}"])):
         res = runner.run(base + extra, cwd=repo, stream=False)
         if not res.ok:
             tail = "\n".join(res.output.strip().splitlines()[-15:])
-            raise BuildError(f"falhou '{step}' do {kind} para {label}:\n{tail}")
+            raise BuildError(f"'{step}' failed for {kind} on {label}:\n{tail}")
 
     out = repo / "out"
     names = {
@@ -121,9 +121,9 @@ def build_firmware(settings: Settings, runner: Runner, *, kind: str,
     }
     found = {k: out / n for k, n in names.items() if n and (out / n).exists()}
     if kind == "klipper" and "bin" not in found:
-        raise BuildError(f"a build do Klipper para {label} não produziu out/klipper.bin")
+        raise BuildError(f"the Klipper build for {label} did not produce out/klipper.bin")
     if not found:
-        raise BuildError(f"a build do {kind} para {label} não produziu nenhum artefacto em {out}")
+        raise BuildError(f"the {kind} build for {label} produced no artifacts in {out}")
 
     dest = build_dest(settings, machine_slug, label, kind)
     if dest.exists():
@@ -137,7 +137,7 @@ def build_firmware(settings: Settings, runner: Runner, *, kind: str,
     shutil.copyfile(cfg, dest / "used.config")
 
     ver = runner.run(["git", "-C", str(repo), "describe", "--always", "--dirty"])
-    version = ver.output.strip() if ver.ok and ver.output.strip() else "desconhecida"
+    version = ver.output.strip() if ver.ok and ver.output.strip() else "unknown"
 
     (dest / "build.json").write_text(json.dumps({
         "kind": kind, "board": label, "profile": profile.id,
@@ -151,7 +151,7 @@ def build_firmware(settings: Settings, runner: Runner, *, kind: str,
 
 
 def edit_config(settings: Settings, runner: Runner, kind: str, target: Path) -> bool:
-    """Abre o menuconfig do projeto sobre `target` (criado se não existir)."""
+    """Open the project's menuconfig on `target` (created if missing)."""
     repo = _repo_for(settings, kind)
     if not (repo / "Makefile").exists():
         return False

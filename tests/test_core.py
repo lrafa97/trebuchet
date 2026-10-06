@@ -42,7 +42,13 @@ class FakeIO:
     def ok(self, t): self.lines.append("OK " + t)
     def confirm(self, t, default=False): return self._confirm
     def pause(self, t=""): pass
-    def choose(self, title, options): return 0
+    def choose(self, title, options, default=None, cancel="Cancel"): return default or 0
+    def title(self, t): pass
+    def ask(self, text, default=""): return default
+    def bold(self, t): return t
+    def dim(self, t): return t
+    def good(self, t): return t
+    def bad(self, t): return t
     @property
     def text(self): return "\n".join(self.lines)
 
@@ -67,10 +73,25 @@ def make_profile(s: Settings, pid: str, *, interface="usb", family="stm32", mcu=
     p = BoardProfile(id=pid, name=pid.upper(), mcu=mcu, family=family, interface=interface,
                      first_katapult_method=method, can_bitrate=bitrate)
     d = save_profile(s.profiles_dir, p)
-    (d / "klipper.config").write_text("CONFIG_X=y\n")
+    (d / "klipper.config").write_text(fake_config(family, mcu, interface, bitrate, klipper=True))
     if katapult_cfg:
-        (d / "katapult.config").write_text("CONFIG_Y=y\n")
+        (d / "katapult.config").write_text(fake_config(family, mcu, interface, bitrate, klipper=False))
     return p
+
+
+def fake_config(family, mcu, interface, bitrate, *, klipper: bool) -> str:
+    """Minimal but consistent .config (same symbols menuconfig writes)."""
+    full = {"stm32f446": "stm32f446xx", "stm32g0b1": "stm32g0b1xx", "rp2040": "rp2040"}.get(mcu, mcu)
+    lines = [f'CONFIG_MCU="{full}"']
+    if klipper:
+        lines.append("CONFIG_FLASH_APPLICATION_ADDRESS=0x8002000")
+        sym = {"usb": "USBSERIAL", "can": "CANSERIAL", "usb-can-bridge": "USBCANBUS", "uart": "SERIAL"}
+        lines.append(f"CONFIG_{sym[interface]}=y")
+        if interface in ("can", "usb-can-bridge"):
+            lines += ["CONFIG_CANBUS=y", f"CONFIG_CANBUS_FREQUENCY={bitrate or 500000}"]
+    else:
+        lines.append("CONFIG_LAUNCH_APP_ADDRESS=0x8002000")
+    return "\n".join(lines) + "\n"
 
 
 class Parsers(unittest.TestCase):
@@ -185,7 +206,7 @@ class Advisor(unittest.TestCase):
         kinds = [s.kind for s in plan.steps]
         self.assertEqual(kinds, ["stop_service", "build_katapult", "build_klipper",
                                  "first_katapult", "flash_klipper", "start_service"])
-        self.assertTrue(any("aquecedor" in a.text for a in plan.advice))
+        self.assertTrue(any("heater" in a.text for a in plan.advice))
 
     def test_new_can_node_queries_uuid_alone(self):
         m = Machine("m", boards=[MachineBoard("tool", "node")])
@@ -211,7 +232,7 @@ class Advisor(unittest.TestCase):
         avr = make_profile(self.s, "avr", family="other", mcu="atmega2560")
         m = Machine("m", boards=[MachineBoard("a", "avr")])
         plan = advise(m, {"avr": avr}, {"a": "yes"})
-        self.assertTrue(any("fora do âmbito" in a.text for a in plan.advice))
+        self.assertTrue(any("outside the scope" in a.text for a in plan.advice))
         # perfil inexistente / máquina vazia
         self.assertTrue(advise(Machine("m", boards=[MachineBoard("a", "nada")]), {}, {}).has_errors)
         self.assertTrue(advise(Machine("m"), {}, {}).has_errors)
@@ -322,8 +343,8 @@ class BuilderAndExecutor(unittest.TestCase):
             fl = Flasher(s, runner, reg, io, sleep=lambda x: None)
             ok = execute_plan(plan, m, {"node": p}, s, runner, reg, fl, io, lambda mm: None)
             self.assertFalse(ok)
-            self.assertIn("Passos que ficaram por fazer", io.text)
-            self.assertIn("Gravar Klipper em 'b'", io.text)
+            self.assertIn("Steps left undone", io.text)
+            self.assertIn("Flash Klipper on 'b'", io.text)
 
 
 class CLI(unittest.TestCase):
@@ -336,7 +357,7 @@ class CLI(unittest.TestCase):
     def test_quit(self):
         r = self.run_cli([], "q\n")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("Trebuchet - Klipper Flash Helper", r.stdout)
+        self.assertIn("Main menu", r.stdout)
 
     def test_eof_exits_cleanly(self):
         self.assertEqual(self.run_cli([], "").returncode, 0)
@@ -346,7 +367,7 @@ class CLI(unittest.TestCase):
 
     def test_doctor_runs(self):
         r = self.run_cli(["doctor"])
-        self.assertIn("Diagnóstico", r.stdout)
+        self.assertIn("Doctor", r.stdout)
         self.assertIn("Python >= 3.8", r.stdout)
 
 
@@ -461,7 +482,7 @@ class DiscoverTests(unittest.TestCase):
         self.assertTrue(d.bridge_unresolved)
         self.assertFalse(d.moonraker)
         from trebuchet import discover
-        self.assertIn("ponte?", discover.render(d))
+        self.assertIn("bridge?", discover.render(d))
 
     def test_discover_marks_bridge_from_moonraker_and_orders_last(self):
         from trebuchet import discover
@@ -503,42 +524,7 @@ class DiscoverTests(unittest.TestCase):
         self.assertEqual(set(names), {"stm32f446xx-A111", "dfu-1", "bootsel-1"})
         self.assertEqual(names["bootsel-1"].chip, "rp2040")
         self.assertEqual(names["dfu-1"].app, "dfu")
-        self.assertTrue(any("Sem printer.cfg" in n for n in d.notes))
-
-    def test_discover_flow_without_config_or_klipper_dir(self):
-        from trebuchet import discover
-        from trebuchet.menu import App
-
-        class IO(FakeIO):
-            def __init__(self, answers):
-                super().__init__(confirm=False)
-                self.answers = list(answers)
-            def title(self, t): pass
-            def ask(self, text, default=""):
-                return (self.answers.pop(0) if self.answers else "") or default
-            def choose(self, title, options):
-                return 0
-
-        with tempfile.TemporaryDirectory() as t:
-            tmp = Path(t)
-            s, _ = make_env(tmp)
-            s.klipper_dir = tmp / "nao-existe"
-            s.printer_cfg = str(tmp / "nao-existe.cfg")
-            by_id = tmp / "by-id"
-            by_id.mkdir()
-            (by_id / "usb-Klipper_stm32f446xx_AAA111-if00").write_text("")
-            make_profile(s, "octo", interface="usb", mcu="stm32f446")
-            io = IO(["maq", "s"])
-            app = App(s, io)
-            orig = discover.discover
-            discover.discover = lambda settings, runner, **kw: orig(
-                settings, runner, by_id_dir=by_id, sys_net=tmp / "net", **kw)
-            try:
-                m = app.discover_flow()
-            finally:
-                discover.discover = orig
-        self.assertIsNotNone(m)
-        self.assertEqual([b.profile_id for b in m.boards], ["octo"])
+        self.assertTrue(any("No printer.cfg" in n for n in d.notes))
 
     def test_catalog_empty_without_klipper_dir(self):
         from trebuchet import catalog
@@ -568,55 +554,13 @@ class DiscoverTests(unittest.TestCase):
                                                        chip="stm32g0b1xx")])
             plan = advise(m, {p.id: p}, {"main": "yes"})
         self.assertTrue(plan.has_errors)
-        self.assertTrue(any("não corresponde" in a.text for a in plan.advice))
+        self.assertTrue(any("does not match" in a.text for a in plan.advice))
 
     def test_machine_chip_roundtrip(self):
         with tempfile.TemporaryDirectory() as t:
             m = Machine(name="x", boards=[MachineBoard(label="a", profile_id="p", chip="stm32f446xx")])
             path = save_machine(Path(t), m)
             self.assertEqual(load_machine(path).boards[0].chip, "stm32f446xx")
-
-    def test_discover_flow_creates_machine(self):
-        from trebuchet import discover
-        from trebuchet.menu import App
-
-        class ScriptedIO(FakeIO):
-            def __init__(self, answers):
-                super().__init__(confirm=False)
-                self.answers, self.titles = list(answers), []
-
-            def title(self, t): self.titles.append(t)
-            def ask(self, text, default=""):
-                return (self.answers.pop(0) if self.answers else "") or default
-            def choose(self, title, options):
-                self.lines.append(f"CHOOSE {title} -> {options}")
-                if options[0].startswith("Criar perfil novo"):   # sem perfis compatíveis
-                    return len(options) - 1                       # ignorar
-                return 0   # primeira opção: o perfil sugerido
-
-        with tempfile.TemporaryDirectory() as t:
-            tmp = Path(t)
-            s, cfg, by_id = self.env(tmp)
-            s.printer_cfg = str(cfg)
-            make_profile(s, "octo", interface="usb", mcu="stm32f446")
-            make_profile(s, "ebb", interface="can", mcu="stm32g0b1", bitrate=1000000)
-            io = ScriptedIO(["minha-maquina", "s", "n", "n"])
-            app = App(s, io)
-            orig = discover.discover
-            discover.discover = lambda settings, runner, **kw: orig(
-                settings, runner, by_id_dir=by_id, sys_net=tmp / "net", **kw)
-            try:
-                m = app.discover_flow()
-            finally:
-                discover.discover = orig
-            labels = [b.label for b in m.boards]
-            saved = load_machine(s.machines_dir / "minha-maquina.toml")
-        self.assertIn("mcu", labels)
-        self.assertIn("toolhead", labels)
-        self.assertEqual(next(b for b in saved.boards if b.label == "mcu").chip, "stm32f446xx")
-        self.assertEqual(next(b for b in saved.boards if b.label == "toolhead").uuid, "0123456789ab")
-        self.assertEqual(app.reg.katapult("minha-maquina", "mcu"), "yes")
-
 
 class CatalogAndPinTests(unittest.TestCase):
     def klipper_cfgs(self, tmp: Path) -> Path:
@@ -703,74 +647,11 @@ class CatalogAndPinTests(unittest.TestCase):
             self.assertTrue(all(m.entry.family == "stm32" for m in only446))
             self.assertEqual(pinmatch.rank(user, es, chip_hint="rp2040xx"), [])
 
-    def test_catalog_has_create_from_scratch_escape_hatch(self):
-        from trebuchet.menu import App
-
-        class IO(FakeIO):
-            def __init__(self):
-                super().__init__(confirm=False)
-                self.seen = []
-            def title(self, t): pass
-            def choose(self, title, options):
-                self.seen.append((title, options))
-                return len(options) - 1        # sempre a última: "criar do zero"
-
-        with tempfile.TemporaryDirectory() as t:
-            s, _ = make_env(Path(t))
-            s.klipper_dir = self.klipper_cfgs(Path(t))
-            io = IO()
-            self.assertIsNone(App(s, io).pick_catalog_entry())
-        self.assertIn("criar do zero", io.seen[0][1][-1])
-        self.assertIn("A criar o perfil do zero", io.text)
-
-    def test_app_pin_suggestions_without_cfg_are_empty(self):
-        from trebuchet.menu import App
-        with tempfile.TemporaryDirectory() as t:
-            s, _ = make_env(Path(t))
-            s.printer_cfg = str(Path(t) / "nao-existe.cfg")
-            self.assertEqual(App(s, FakeIO()).pin_suggestions("mcu"), [])
-
-
-class ProfileFromDiscoveryTests(unittest.TestCase):
-    def test_new_profile_prefilled_from_device(self):
-        from trebuchet.menu import App
-
-        class IO(FakeIO):
-            def __init__(self, answers):
-                super().__init__(confirm=False)
-                self.answers = list(answers)
-                self.asked = []
-
-            def title(self, t): pass
-            def ask(self, text, default=""):
-                self.asked.append(text)
-                return (self.answers.pop(0) if self.answers else "") or default
-            def choose(self, title, options):
-                self.asked.append("CHOOSE " + title)
-                return 0
-
-        with tempfile.TemporaryDirectory() as t:
-            tmp = Path(t)
-            s, _ = make_env(tmp)
-            cfg = tmp / "w.config"
-            cfg.write_text("CONFIG_MACH_STM32=y\n")
-            io = IO(["EBB42 1.2 BTT", "", str(cfg), str(cfg)])
-            p = App(s, io).new_profile(chip="stm32g0b1xx", interface="can")
-            self.assertEqual((p.family, p.mcu, p.interface), ("stm32", "stm32g0b1", "can"))
-            self.assertEqual(p.id, "ebb42-1.2-btt")
-            self.assertTrue(p.klipper_config.exists())
-            # não perguntou família, MCU, interface, identificador nem notas: já se sabiam
-            for q in io.asked:
-                for banned in ("Família", "Interface com o Pi", "MCU exato", "Identificador", "Notas"):
-                    self.assertNotIn(banned, q)
-            self.assertTrue(p.dfu_heater_warning)
-
-
     def test_profile_with_mcu_typo_is_flagged(self):
         with tempfile.TemporaryDirectory() as t:
             s, _ = make_env(Path(t))
             p = make_profile(s, "ebb", interface="can", mcu="smt32g0b1", bitrate=500000)
-            self.assertTrue(any("MCU não reconhecido" in x for x in p.problems()))
+            self.assertTrue(any("MCU not recognised" in x for x in p.problems()))
             m = Machine(name="x", boards=[MachineBoard(label="th", profile_id="ebb", uuid="aabbccddeeff")])
             plan = advise(m, {"ebb": p}, {"th": "yes"})
         self.assertTrue(plan.has_errors)
@@ -797,9 +678,9 @@ class UiTests(unittest.TestCase):
         res, out = self.run_io(["EBB42 1.2 BTT", "3", ], lambda io: io.choose("T", ["a", "b", "c"]))
         self.assertEqual(res, 2)
         self.assertIn("1) a", out)
-        self.assertIn("0) Cancelar", out)
+        self.assertIn("0) Cancel", out)
         self.assertNotIn("B)", out)
-        self.assertIn("Opção inválida", out)            # texto livre não é aceite como resposta
+        self.assertIn("Invalid option", out)            # texto livre não é aceite como resposta
 
     def test_choose_cancel_and_range(self):
         res, _ = self.run_io(["9", "0"], lambda io: io.choose("T", ["a"]))

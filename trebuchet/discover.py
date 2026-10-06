@@ -1,19 +1,19 @@
-"""Descoberta do que a máquina tem: junta várias fontes numa só lista de dispositivos.
+"""Discover what the machine has: merges several sources into one device list.
 
-Fontes, da mais segura para a mais invasiva:
-  1. printer.cfg (e os [include]): nomes, canbus_uuid, serial. Só leitura de ficheiros.
-  2. /dev/serial/by-id: boards USB ligadas agora e o MCU (vem no nome).
-  3. Moonraker (opcional): chip e versão do firmware de cada MCU declarado, com o Klipper a correr.
-  4. can0: se o adaptador é uma bridge Klipper (driver gs_usb) ou outro (ex.: MCP2515).
-  5. canbus_query (opcional, a pedido): nós CAN ainda sem id atribuído.
+Sources, from safest to most invasive:
+  1. printer.cfg (and its [include]s): names, canbus_uuid, serial. File reads only.
+  2. /dev/serial/by-id: USB boards connected right now, and the MCU (it is in the name).
+  3. Moonraker (optional): chip and firmware version of each declared MCU, with Klipper running.
+  4. can0: whether the adapter is a Klipper bridge (gs_usb driver) or another kind (e.g. MCP2515).
+  5. canbus_query (optional, on request): CAN nodes that have no id assigned yet.
 
-O que NÃO se consegue saber (e o programa não adivinha): o modelo da board (vários
-modelos partilham o MCU) e se uma board já tem Katapult. O chip serve para validar o
-perfil escolhido, não para o escolher sozinho.
+What CANNOT be known (and the program doesn't guess): the board model (several
+models share an MCU) and whether a board already has Katapult. The chip is used to validate
+the chosen profile, not to choose it on its own.
 
-Por verificar em hardware real: o formato exato da resposta do Moonraker (campos
-mcu_constants/MCU) e se CANBUS_BRIDGE aparece nas constantes. O parser é tolerante:
-se não encontrar o campo, deixa o chip por saber.
+To verify on real hardware: the exact format of Moonraker's response (mcu_constants/MCU
+fields) and whether CANBUS_BRIDGE shows up in the constants. The parser is tolerant:
+if it doesn't find the field, the chip is left unknown.
 """
 from __future__ import annotations
 
@@ -33,18 +33,18 @@ _SECTION = re.compile(r"^\[(?P<name>[^\]]+)\]\s*$")
 _KEY = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(?P<val>.*)$")
 _UUID = re.compile(r"^[0-9a-fA-F]{12}$")
 
-# Núcleo do nome do MCU para comparar perfil <-> chip (stm32f446xx == stm32f446).
+# Core of the MCU name, to compare profile <-> chip (stm32f446xx == stm32f446).
 _CORE = re.compile(r"(stm32[a-z]\d[a-z0-9]{2}|rp2040)")
 
 
 # --- printer.cfg ------------------------------------------------------------------
 @dataclass
 class CfgMcu:
-    name: str                 # "mcu" para a secção sem nome, senão o sufixo ([mcu toolhead] -> toolhead)
+    name: str                 # "mcu" for the unnamed section, otherwise the suffix ([mcu toolhead] -> toolhead)
     serial: str = ""
     uuid: str = ""
     canbus_interface: str = ""
-    source: str = ""          # ficheiro onde foi declarado
+    source: str = ""          # file where it was declared
 
 
 def find_printer_cfg(explicit: str = "", home: Optional[Path] = None) -> Optional[Path]:
@@ -64,8 +64,8 @@ def _strip_inline_comment(val: str) -> str:
 
 
 def parse_klipper_cfg(path: Path, _seen: Optional[set] = None) -> list[CfgMcu]:
-    """Lê as secções [mcu] e [mcu NOME], seguindo [include ...] (relativo ao ficheiro,
-    com globs). Não valida o resto do ficheiro."""
+    """Read the [mcu] and [mcu NAME] sections, following [include ...] (relative to the file,
+    with globs). Does not validate the rest of the file."""
     seen = _seen if _seen is not None else set()
     try:
         real = path.resolve()
@@ -84,7 +84,7 @@ def parse_klipper_cfg(path: Path, _seen: Optional[set] = None) -> list[CfgMcu]:
     for raw in lines:
         if not raw.strip() or raw.lstrip().startswith(("#", ";")):
             continue
-        if raw[0] in " \t":        # continuação de valor multilinha
+        if raw[0] in " \t":        # continuation of a multiline value
             continue
         m = _SECTION.match(raw.strip())
         if m:
@@ -127,7 +127,7 @@ class McuInfo:
 
 
 def parse_moonraker_mcus(text: str) -> dict[str, McuInfo]:
-    """Resposta de /printer/objects/query?mcu&mcu%20nome. Tolerante: campos em falta ficam vazios."""
+    """Response of /printer/objects/query?mcu&mcu%20name. Tolerant: missing fields are left empty."""
     try:
         status = json.loads(text)["result"]["status"]
     except (ValueError, KeyError, TypeError):
@@ -147,7 +147,7 @@ def parse_moonraker_mcus(text: str) -> dict[str, McuInfo]:
 
 def moonraker_mcus(url: str, names: list[str], timeout: float = 3.0,
                    opener: Callable = urllib.request.urlopen) -> Optional[dict[str, McuInfo]]:
-    """None se o Moonraker não responde (Klipper parado, sem Moonraker, URL errado)."""
+    """None if Moonraker doesn't respond (Klipper stopped, no Moonraker, wrong URL)."""
     objs = ["mcu" if n == "mcu" else f"mcu {n}" for n in names]
     if not objs:
         return {}
@@ -161,7 +161,7 @@ def moonraker_mcus(url: str, names: list[str], timeout: float = 3.0,
 
 # --- can0 -------------------------------------------------------------------------
 def can_driver(iface: str, sys_net: Path = Path("/sys/class/net")) -> Optional[str]:
-    """Nome do driver do interface (gs_usb numa bridge Klipper). None se não existe."""
+    """Driver name of the interface (gs_usb on a Klipper bridge). None if it doesn't exist."""
     link = sys_net / iface / "device" / "driver"
     try:
         return link.resolve().name if link.exists() else ("" if (sys_net / iface).exists() else None)
@@ -169,7 +169,7 @@ def can_driver(iface: str, sys_net: Path = Path("/sys/class/net")) -> Optional[s
         return None
 
 
-# --- modelo -----------------------------------------------------------------------
+# --- model -----------------------------------------------------------------------
 @dataclass
 class Device:
     name: str
@@ -179,9 +179,9 @@ class Device:
     device: str = ""
     chip: str = ""
     version: str = ""
-    present: Optional[bool] = None   # visto agora; None = não consegui saber
-    bridge: Optional[bool] = None    # None = por identificar
-    app: str = ""                    # klipper | katapult, quando visível
+    present: Optional[bool] = None   # seen now; None = couldn't tell
+    bridge: Optional[bool] = None    # None = not identified yet
+    app: str = ""                    # klipper | katapult, when visible
     sources: list[str] = field(default_factory=list)
 
 
@@ -189,9 +189,9 @@ class Device:
 class Discovery:
     devices: list[Device] = field(default_factory=list)
     can_iface: str = "can0"
-    can_driver: Optional[str] = None     # None = interface não existe; "" = driver desconhecido
+    can_driver: Optional[str] = None     # None = interface doesn't exist; "" = unknown driver
     printer_cfg: str = ""
-    moonraker: Optional[bool] = None     # None = não perguntado
+    moonraker: Optional[bool] = None     # None = not asked
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -200,7 +200,7 @@ class Discovery:
 
     @property
     def bridge_unresolved(self) -> bool:
-        """Há um adaptador gs_usb (bridge Klipper) mas nenhum nó está marcado como ponte."""
+        """There is a gs_usb adapter (Klipper bridge) but no node is marked as the bridge."""
         can = [d for d in self.devices if d.transport == "can"]
         return self.has_bridge_adapter and bool(can) and not any(d.bridge for d in can)
 
@@ -211,7 +211,7 @@ def chip_core(text: str) -> str:
 
 
 def chip_matches(profile_mcu: str, chip: str) -> Optional[bool]:
-    """True/False quando ambos permitem comparar; None quando não dá (não bloqueia)."""
+    """True/False when both allow a comparison; None when they don't (doesn't block)."""
     a, b = chip_core(profile_mcu), chip_core(chip)
     if not a or not b:
         return None
@@ -245,11 +245,11 @@ def discover(settings, runner, *, printer_cfg: str = "", use_moonraker: bool = T
             elif c.serial:
                 devices.append(Device(c.name, "uart", device=c.serial, sources=["printer.cfg"]))
     else:
-        d.notes.append("Sem printer.cfg: não faz mal, uso só o que está ligado agora "
-                       "(USB, DFU/BOOTSEL, nós CAN). Se tiveres um, define o caminho em "
+        d.notes.append("No printer.cfg: that's fine, I only use what is connected right now "
+                       "(USB, DFU/BOOTSEL, CAN nodes). If you have one, set the path in "
                        "trebuchet.cfg, [paths] printer_cfg.")
 
-    # 2) USB agora
+    # 2) USB now
     scan = detect.scan_usb(runner, by_id_dir)
     for s in scan.serial:
         match = next((x for x in devices if x.transport == "usb" and x.serial and
@@ -261,8 +261,8 @@ def discover(settings, runner, *, printer_cfg: str = "", use_moonraker: bool = T
         else:
             devices.append(Device(f"{s.mcu}-{s.serial[-4:]}", "usb", serial=s.serial, chip=s.mcu,
                                   present=True, app=s.app, sources=["usb"]))
-    # Boards em modo bootloader de ROM (DFU STM32 / BOOTSEL RP2040) não têm nome em by-id:
-    # vêm só do lsusb. Os IDs 0483:df11 e 2e8a:0003 são conhecimento geral (confirma com lsusb).
+    # Boards in ROM bootloader mode (STM32 DFU / RP2040 BOOTSEL) have no name in by-id:
+    # they only show up in lsusb. The IDs 0483:df11 and 2e8a:0003 are general knowledge (confirm with lsusb).
     for kind, prefix, app, chip in (("stm32-dfu", "dfu", "dfu", ""), ("rp2040-bootsel", "bootsel", "bootsel", "rp2040")):
         for i, _ in enumerate(scan.of_kind(kind), 1):
             devices.append(Device(f"{prefix}-{i}", "usb", chip=chip, present=True, app=app,
@@ -279,7 +279,7 @@ def discover(settings, runner, *, printer_cfg: str = "", use_moonraker: bool = T
                               names, opener=opener)
         d.moonraker = info is not None
         if info is None:
-            d.notes.append("Moonraker não respondeu: sem chip/versão dos nós CAN declarados.")
+            d.notes.append("Moonraker did not respond: no chip/version for the declared CAN nodes.")
         else:
             for x in devices:
                 i = info.get(x.name)
@@ -296,14 +296,14 @@ def discover(settings, runner, *, printer_cfg: str = "", use_moonraker: bool = T
     d.can_driver = can_driver(settings.can_interface, sys_net)
     can_devs = [x for x in devices if x.transport == "can"]
     if d.can_driver is not None and d.can_driver != "gs_usb":
-        for x in can_devs:        # adaptador que não é bridge Klipper: nenhuma board o é
+        for x in can_devs:        # adapter is not a Klipper bridge: no board is
             x.bridge = False
 
-    # 5) canbus_query (a pedido)
+    # 5) canbus_query (on request)
     if canbus_query:
         q = detect.query_can_klipper(settings, runner)
         if not q.ok:
-            d.notes.append("canbus_query falhou: " + q.output.strip()[-200:])
+            d.notes.append("canbus_query failed: " + q.output.strip()[-200:])
         for n in q.nodes:
             known = next((x for x in can_devs if x.uuid == n.uuid.lower()), None)
             if known:
@@ -315,19 +315,19 @@ def discover(settings, runner, *, printer_cfg: str = "", use_moonraker: bool = T
 
     d.devices = devices
     if d.bridge_unresolved:
-        d.notes.append("O can0 é uma bridge Klipper (gs_usb), mas não sei qual dos nós CAN é a ponte: "
-                       "diz-me tu.")
+        d.notes.append("can0 is a Klipper bridge (gs_usb), but I don't know which CAN node is the bridge: "
+                       "please tell me.")
     return d
 
 
 def flash_order(devices: list[Device]) -> list[Device]:
-    """Fora do CAN primeiro (não dependem do barramento), nós CAN depois, a ponte em último.
-    A regra 'ponte em último' é raciocínio nosso, não vem da documentação do Klipper."""
+    """Non-CAN first (they don't depend on the bus), then CAN nodes, the bridge last.
+    The 'bridge last' rule is our own reasoning, not from Klipper's documentation."""
     def rank(x: Device) -> int:
         if x.bridge:
             return 2
         return 1 if x.transport == "can" else 0
-    return sorted(devices, key=rank)   # sorted é estável: mantém a ordem do printer.cfg
+    return sorted(devices, key=rank)   # sorted is stable: keeps the printer.cfg order
 
 
 def profile_interface_for(x: Device) -> str:
@@ -337,7 +337,7 @@ def profile_interface_for(x: Device) -> str:
 
 
 def candidate_profiles(x: Device, profiles) -> list:
-    """Perfis compatíveis com o dispositivo: mesma interface e, se o chip é conhecido, o mesmo MCU."""
+    """Profiles compatible with the device: same interface and, if the chip is known, the same MCU."""
     want = profile_interface_for(x)
     out = []
     for p in profiles:
@@ -353,25 +353,28 @@ def render(d: Discovery) -> str:
     rows = []
     for x in flash_order(d.devices):
         if x.bridge:
-            role = "ponte"
+            role = "bridge"
         elif x.transport == "can" and d.bridge_unresolved:
-            role = "ponte?"
+            role = "bridge?"
         else:
             role = x.transport
-        seen = {True: "sim", False: "não", None: "?"}[x.present]
+        seen = {True: "yes", False: "no", None: "?"}[x.present]
         ident = x.uuid or x.serial or x.device or "-"
         rows.append((x.name, role, x.chip or "?", x.version.split()[0] if x.version else "-",
                      ident, seen, x.app or "-"))
-    head = ("Nome", "Tipo", "Chip", "Versão", "Identificador", "Ligada", "App")
+    head = ("Name", "Type", "Chip", "Version", "Identifier", "Connected", "App")
     widths = [max(len(str(r[i])) for r in [head] + rows) for i in range(len(head))]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
-    lines = [fmt.format(*head), fmt.format(*("-" * w for w in widths))]
-    lines += [fmt.format(*r) for r in rows] or ["(nada encontrado)"]
+    if not rows:
+        lines = ["(nothing found)"]
+    else:
+        lines = [fmt.format(*head), fmt.format(*("-" * w for w in widths))]
+        lines += [fmt.format(*r) for r in rows]
     iface = d.can_iface
     if d.can_driver is None:
-        lines.append(f"\n{iface}: não existe")
+        lines.append(f"\n{iface}: does not exist")
     else:
-        lines.append(f"\n{iface}: driver {d.can_driver or 'desconhecido'}"
+        lines.append(f"\n{iface}: driver {d.can_driver or 'unknown'}"
                      + (" (bridge Klipper)" if d.has_bridge_adapter else ""))
     lines += [f"[!] {n}" for n in d.notes]
     return "\n".join(lines)

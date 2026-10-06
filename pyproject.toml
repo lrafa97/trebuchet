@@ -1,6 +1,6 @@
 [project]
 name = "trebuchet"
-version = "0.1.0"
+version = "0.2.0"
 description = "Klipper Flash Helper: construir e gravar Klipper/Katapult em boards stm32 e rp2040"
 requires-python = ">=3.8"
 # Sem dependências pip: o Trebuchet só usa a biblioteca padrão. O pyserial que o flashtool.py

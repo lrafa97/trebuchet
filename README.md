@@ -1,50 +1,35 @@
-# Trebuchet - Klipper Flash Helper
+# Trebuchet
 
-**Atualiza as boards Klipper com a ordem certa, sem escreveres os comandos.**
+**Build and flash Klipper and Katapult on your boards, in the right order, without typing commands.**
 
-Menu numerado (estilo KIAUH) para correr no Raspberry Pi: escolhes as boards do setup,
-o programa aconselha, constrói o Katapult (só onde faz falta) e o Klipper, e só depois grava,
-com a ordem certa para máquinas CAN.
+A numbered, KIAUH-style terminal menu for the Raspberry Pi. It looks at what is connected, helps you
+say which board each one is, builds Katapult only where it is missing, builds Klipper, and then
+flashes (CAN bridge last), checking after every flash.
 
-**Estado: v0.1, nunca correu contra hardware real.** Testado com parsers, repositórios simulados,
-uma sessão completa em `--dry-run` e uma instalação real com clones do Katapult e do Klipper.
-Antes de gravar uma máquina de cliente, faz o primeiro teste numa board de bancada.
+**Status: v0.2. It has never run against real hardware.** It is tested with parsers, simulated
+repositories, scripted sessions and `--dry-run`. Before touching a client's machine, do the first
+real run on a bench board that is not a client's, with `treb --dry-run` first.
 
-## Instalação no Raspberry Pi
+## Install (Raspberry Pi 3, 4, 5; Bullseye or newer)
 
 ```bash
 git clone https://github.com/lrafa97/trebuchet.git ~/trebuchet
 cd ~/trebuchet
-./install.sh --dry-run     # vê o que vai fazer, sem alterar nada
-./install.sh               # instala
-treb doctor                # verifica ferramentas e caminhos
-treb                       # abre o menu
+./install.sh --dry-run     # shows what it would do, changes nothing
+./install.sh               # installs
+treb doctor                # checks tools and paths
+treb                       # opens the menu
 ```
 
-Corre como o **utilizador normal** que usa o Klipper (não root); o script usa `sudo` quando precisa.
-Para atualizar o Trebuchet: `cd ~/trebuchet && git pull && ./install.sh`.
-Os comandos instalados são `treb` e `trebuchet` (o mesmo programa). Para os remover: `./uninstall.sh` (não apaga os teus dados nem o Klipper/Katapult).
+Run it as the normal user that runs Klipper (not root); the script uses `sudo` when needed.
+Update Trebuchet with `cd ~/trebuchet && git pull && ./install.sh`. Remove it with `./uninstall.sh`
+(your data, Klipper and Katapult are left alone). Commands: `treb` and `trebuchet` are the same program.
 
-### O que precisas de ter
-
-| Coisa | Quem trata | Notas |
-|---|---|---|
-| **Python 3.8+** | já vem no sistema | Bullseye (3.9) e Bookworm (3.11) servem, por isso corre em qualquer Pi, do 3 ao 5. Abaixo de 3.11 usa um leitor de TOML próprio (`trebuchet/tomlmini.py`), sem `pip`. O Katapult **não** instala Python: o `flashtool.py` usa o `python3` do sistema. |
-| **pyserial** | `install.sh` (apt `python3-serial`) | Pedido pelo README do Katapult para USB/UART. Vem do apt porque no Bookworm o pip recusa instalar no Python do sistema. |
-| **Klipper** (código-fonte) | tu, ou `--with-klipper-source` | Precisa de existir `~/klipper`. Se já usas o Klipper, está lá. Sem ele o Trebuchet não compila firmware. |
-| **Katapult** | `install.sh` (clona para `~/katapult`) | Não mexe numa instalação que já exista (`--update` faz `git pull`). |
-| Compilador ARM, `make`, `libncurses-dev` | `install.sh` (apt) | `gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi build-essential libncurses-dev` |
-| `dfu-util`, `usbutils`, `iproute2` | `install.sh` (apt) | 1.º Katapult por DFU, `lsusb`, estado do `can0` |
-| `stm32flash`, `python3-can` | `install.sh` (apt, opcionais) | UART de ROM; `canbus_query.py` quando não há `klippy-env` |
-| grupo `dialout` | `install.sh` | Acesso às portas série USB sem root. É preciso sair e voltar a entrar. |
-
-O Trebuchet em si **não tem dependências pip**: usa só a biblioteca padrão do Python.
-
-O que o instalador **não** faz: instalar o serviço Klipper, configurar o `can0` (depende da máquina;
-ver `docs/CANBUS.md` do Klipper) nem tocar em instalações existentes.
-
-Opções do `install.sh`: `--dry-run`, `--yes`, `--no-apt`, `--update`, `--with-klipper-source`,
-`--klipper-dir DIR`, `--katapult-dir DIR`. Caminhos diferentes do padrão ficam em `~/trebuchet_data/trebuchet.cfg`:
+Needs Python 3.8 or newer (Bullseye has 3.9). No pip packages. `install.sh` installs the ARM
+compiler, `dfu-util`, `usbutils`, `iproute2`, `python3-serial`, and clones Katapult to `~/katapult`
+if missing. It does not install Klipper, set up `can0`, or touch existing installs.
+Options: `--dry-run --yes --no-apt --update --with-klipper-source --klipper-dir DIR --katapult-dir DIR`.
+Other paths go in `~/trebuchet_data/trebuchet.cfg`:
 
 ```ini
 [paths]
@@ -55,129 +40,110 @@ klippy_env = /home/pi/klippy-env
 interface = can0
 ```
 
-## Âmbito da v1
+## Using it
 
-- MCUs **stm32** e **rp2040** (o que o Katapult documenta; CAN só em stm32 série F e rp2040).
-- Interfaces: USB, CAN, bridge USB-CAN, UART.
-- AVR, SAM, LPC e afins ficam de fora (usam avrdude/bossac/OpenOCD, ver a página Bootloaders do Klipper).
+```
+  Klipper    v0.12.0-...        Katapult   v0.0.1-...
+  Printer    standby            can0       up, 500000
 
-## Fluxo
+  1) Update a machine            scan, identify, plan, build, flash
+  2) Machines
+  3) Board profiles
+  4) Detect connected devices    read-only
+  5) First-Katapult guides
+  6) Doctor
+  0) Exit
+```
 
-1. **Perfis de board** (uma vez por modelo): MCU, interface, método do 1.º Katapult, bitrate CAN,
-   e os ficheiros `.config` do Klipper (e do Katapult) que **já funcionam** nas tuas máquinas.
-   Podes importar um `.config`, usar o atual de `~/klipper` ou abrir o menuconfig.
-2. **Nova máquina**: ou **descobres** o que está ligado (`Máquinas > Descobrir`, ver abaixo), ou
-   escolhes as boards à mão e identificas cada uma (UUID CAN / serial USB). Em ambos dizes se
-   já tem Katapult (sim / não / não sei).
-3. **Assistente completo**:
-   - aconselhamento e plano (erros bloqueiam o plano);
-   - **constrói** Katapult (só boards sem ele) e Klipper, tudo antes de gravar qualquer coisa;
-   - **grava**: 1.º Katapult nas boards que precisam, depois Klipper, **bridge por último**;
-   - verifica depois de cada gravação e **pára à primeira falha**.
+Rules every screen follows: options are numbered, `0` goes back, Enter accepts the recommended
+option. Text is typed only when the program cannot know the answer.
 
-`--dry-run` não grava boards nem mexe no serviço Klipper (as compilações correm na mesma).
-A compilação corre em `~/klipper` e `~/katapult` e apaga a pasta `out/` de cada um; o `.config`
-do perfil nunca é alterado (a build usa uma cópia).
-Comandos úteis sem menu: `treb doctor`, `treb scan`, `treb discover`, `treb plan <máquina>`.
+**Update a machine** is the normal path:
 
-## Descoberta automática
+1. It scans: USB (`/dev/serial/by-id`), DFU/BOOTSEL, `can0`, Moonraker (read-only), and
+   `canbus_query` if you allow it. A `printer.cfg` is optional.
+2. For each board found you pick which board it is. Suggestions come first: boards recognised from
+   last time (by CAN UUID or USB serial), saved profiles with the same MCU and interface, then boards
+   from Klipper's own list ranked by how many pins match your `printer.cfg`. If none fits, browse
+   by brand (only boards with that MCU) or create a profile from scratch.
+3. Creating a profile opens Klipper's own menuconfig. MCU, interface and CAN speed are **read from
+   the resulting `.config`**, not typed again, and checked against what the board reports.
+   Typed input: the machine name, and the board name only when starting from scratch.
+4. Boards without Katapult get a Katapult menuconfig; Trebuchet checks that Katapult's application
+   offset equals Klipper's.
+5. It shows the plan and warnings, then builds everything first, and only then asks to flash.
+   It stops at the first failure.
 
-`treb discover` (ou `Máquinas > Descobrir`) junta várias fontes numa só tabela, da mais segura para a mais invasiva:
+Other commands: `treb update`, `treb doctor`, `treb scan`, `treb discover [--canbus-query] [--no-moonraker]`,
+`treb plan <machine>`. `--dry-run` never flashes and never touches services (builds still run).
 
-1. `printer.cfg` e os `[include]` (`~/printer_data/config/` ou `~/klipper_config/`; muda com `printer_cfg` em `trebuchet.cfg`): nomes, `canbus_uuid`, `serial`.
-2. `/dev/serial/by-id`: boards USB ligadas agora e o chip (vem no nome).
-3. Moonraker (só leitura, `moonraker_url` em `[services]`): chip e versão dos MCU declarados.
-4. `can0`: se o driver é `gs_usb` há uma bridge Klipper; com outro driver (MCP2515, etc.) nenhuma board é ponte.
-5. `canbus_query` (só com `--canbus-query`): nós CAN ainda sem id atribuído.
+## Safety rules
 
-O que **não** se descobre: o modelo da board (vários partilham o MCU) e se já tem Katapult. Por isso
-escolhes o perfil de cada board; o chip só filtra a lista e fica gravado na máquina: se o chip não
-corresponder ao perfil, o plano **bloqueia** (protege contra gravar a board errada).
-A ordem proposta: boards fora do CAN, nós CAN, ponte por último.
+- **Never stops Klipper during a print.** It asks Moonraker for `print_stats.state`; `printing` or
+  `paused` blocks the flash. If Moonraker does not answer it does not assume idle: it asks you.
+- Katapult is built and flashed only on boards that lack it. State "unknown" blocks the plan until
+  you answer or run the active test.
+- `flashtool.py -q` only with one CAN node connected (Katapult's own warning); it asks first.
+- Every flash shows board, interface and file and asks for confirmation.
+- The CAN bridge is flashed last. That is our own reasoning, not documented.
+- Profiles that contradict their `.config` (MCU, interface, CAN speed), or a chip that does not match
+  what was seen, block the plan.
+- A DFU heater warning is one non-blocking line; disable it per profile with `dfu_heater_warning = false`.
 
-## Catálogo de boards e sugestão por pins
+## Scope
 
-Em vez de uma lista nossa (que ficava desatualizada e que eu teria de inventar), o catálogo lê
-o comentário inicial de cada `~/klipper/config/generic-*.cfg` e `sample-*.cfg`: é onde o Klipper diz
-para que MCU, bootloader e cristal compilar (BigTreeTech, Mellow/FLY, FYSETC e outras). Está
-sempre igual à tua versão do Klipper. `Perfis > Criar perfil novo > A partir de uma board conhecida`
-mostra o texto do Klipper e preenche o perfil (nome, MCU, família).
+STM32 and RP2040. Interfaces: USB, CAN, USB-CAN bridge, UART. AVR, SAM, LPC, RP2350 are out of scope.
 
-- Se o texto menciona **vários chips** (ex.: Octopus: F446 ou F429), o programa pergunta qual é o teu.
-- Boards que o Klipper não traz: acrescenta-as a `~/trebuchet_data/catalog.toml` (ver `examples/catalog.toml`).
-- Se tiveres `printer.cfg`, compara os **pins** que ele usa para cada MCU com os de cada board do catálogo
-  e **sugere** as mais parecidas, com a percentagem. É uma sugestão, não uma certeza: revisões com
-  os mesmos pins (v1.0 / v1.1, EBB v1.1 / v1.2) ficam empatadas, e o programa diz-to.
-- **Sem `printer.cfg`, sem Moonraker e até sem Klipper instalado**, a descoberta funciona na mesma
-  com o que está ligado (USB, DFU, BOOTSEL, nós CAN) e escolhes o perfil à mão.
+## Board list
 
-## Decisões de segurança
+The catalog is read from the header comment of every `~/klipper/config/generic-*.cfg` and
+`sample-*.cfg`, where Klipper says which MCU, bootloader and crystal to compile for. It always
+matches your Klipper version. Missing boards: add them to `~/trebuchet_data/catalog.toml`
+(see `examples/catalog.toml`). Pin matching only **suggests**: board revisions with the same pins tie.
 
-- **Katapult só onde falta.** Regravar o Katapult numa board que já o tem é o passo mais arriscado.
-- **Estado "não sei" bloqueia o plano** até declarares ou fazeres o teste ativo (pede o bootloader
-  ao Klipper e vê se reaparece como Katapult ou como DFU/BOOTSEL; pede confirmação).
-- **`flashtool.py -q` só com um nó CAN ligado** (aviso do README do Katapult: com vários nós podem
-  surgir erros de transmissão e um nó entrar em "bus off"). O programa recusa correr o `-q` sem confirmação.
-- **Aviso de aquecedores em DFU**: uma linha, sem confirmação extra; desligável por perfil
-  (`dfu_heater_warning = false`).
-- **Cada gravação mostra board, interface e ficheiro e pede confirmação.**
-- Se faltar o compilador ARM, o programa avisa antes de tentar compilar.
+The MCU shown is what the **running firmware reports** (USB name, Moonraker), not read from the
+silicon. A blank board in DFU/BOOTSEL does not report one.
 
-## Ficheiros
+## Files
 
 ```
 ~/trebuchet_data/
   profiles/<id>/profile.toml, klipper.config, katapult.config
-  machines/<nome>.toml
-  builds/<máquina>/<board>/<klipper|katapult>/   (+ build.json com versão e sha256)
-  registry.json                                  (estado: Katapult sim/não, última gravação)
-  logs/trebuchet.log                                   (todos os comandos executados)
+  machines/<name>.toml
+  builds/<machine>/<board>/<klipper|katapult>/    (+ build.json with version and sha256)
+  registry.json        Katapult yes/no, last flash, remembered board identities
+  logs/trebuchet.log   every command that was run
 ```
 
-Exemplos em `examples/`. Os valores são só marcadores: não há tabela de offsets nem clocks
-por board, porque a documentação não a tem e dependem da board. Usa os `.config` que já funcionam.
+## Verified and not verified
 
-## O que foi verificado e o que não
+Verified against real code: Kconfig symbols (`CONFIG_MCU`, `USBSERIAL`, `CANSERIAL`, `USBCANBUS`,
+`CANBUS_FREQUENCY`, `FLASH_APPLICATION_ADDRESS`, `LAUNCH_APP_ADDRESS`) using `.config` files produced
+by Klipper's and Katapult's own build; `make KCONFIG_CONFIG=... olddefconfig`; the `flashtool.py`
+flags used; `install.sh` against real clones.
 
-Verificado contra o código real (Klipper e Katapult clonados pelo instalador):
-- `make KCONFIG_CONFIG=<ficheiro> olddefconfig` e `clean` funcionam com um `.config` fora do repositório
-  e não criam `~/klipper/.config`.
-- Todas as flags usadas do `flashtool.py` existem: `-d -b -i -f -u -q -r -s`.
-- A instalação (`install.sh`) com clones reais, e a segunda execução sem alterar nada.
+**Not verified. Confirm before relying on it:**
+- Nothing has run on real boards, real CAN, or a full build-and-flash.
+- Moonraker response formats (`print_stats`, `mcu_constants.MCU`, `mcu_version`, `CANBUS_BRIDGE`)
+  are assumptions tested only with invented responses. If a field is missing the chip shows "?".
+- That the `can0` driver of a Klipper USB-CAN bridge is `gs_usb` (read from `/sys/class/net`).
+- apt package names; that `dfu-util` needs `sudo`; the `Programming Complete` message and the
+  `-q` / `canbus_query.py` output formats.
+- That a freshly flashed CAN node shows up in `canbus_query.py` (the post-flash check assumes so).
+- USB IDs `0483:df11` (STM32 DFU), `2e8a:0003` (RP2040 BOOTSEL); Katapult can customise them.
+- Where `flashtool.py` lives inside Klipper (searched in 3 places, `~/katapult` first).
+- Pin-based suggestions were only tested with Klipper's sample configs, not a real `printer.cfg`.
 
-**Não verificado, confirma antes de confiar:**
-- Nada foi testado com boards reais, CAN real, nem com uma compilação completa e gravação.
-- Os nomes dos pacotes apt: baseados no instalador do Klipper; confirma com `./install.sh --dry-run` e `apt-get install --dry-run` no Pi.
-- Que `dfu-util` precisa de `sudo` (o programa usa `sudo` quando não és root; com regras udev podes tirá-lo).
-- Mensagem `Programming Complete` do flashtool e formatos do `-q` e do `canbus_query.py`: lidos no código-fonte, podem mudar.
-- Se parar o serviço Klipper faz os nós voltarem a aparecer no `canbus_query.py`: a documentação só diz
-  que nós já configurados não aparecem. A verificação pós-gravação assume que um nó acabado de gravar aparece.
-- Caminho do `flashtool.py` dentro do Klipper (`lib/katapult/...`): palpite; o programa procura em 3 sítios
-  (e usa o do `~/katapult` primeiro).
-- IDs `0483:df11` (DFU STM32) e `2e8a:0003` (BOOTSEL RP2040) e o disco `RPI-RP2`: conhecimento geral.
-  O Katapult pode ter VID/PID/serial personalizados no menuconfig.
-- Se o pedido de bootloader exige alguma opção no menuconfig do Klipper: as páginas lidas não mencionam nenhuma.
-- A regra "bridge por último" é raciocínio nosso, não está na documentação.
-- Catálogo e pins: testados só com ficheiros do Klipper (um clone recente) e subconjuntos aleatórios dos
-  pins de cada board: a board certa ficou no top 3 em quase todos os casos, em 1.º quando os pins a
-  distinguem. Nunca testado com um `printer.cfg` real nem com boards reais. O texto de cada board é
-  o do Klipper, não do fabricante.
-- Descoberta: o formato da resposta do Moonraker (`mcu_constants.MCU`, `mcu_version`) e se `CANBUS_BRIDGE`
-  aparece nas constantes do MCU são **suposições** minhas, testadas só com respostas inventadas.
-  Se o campo faltar, o chip fica "?" e nada falha. Também não confirmei que o driver do `can0` é `gs_usb`
-  numa bridge Klipper (o programa lê `/sys/class/net/<iface>/device/driver`).
-- O programa **não verifica** que o offset de bootloader do Klipper coincide com o offset da aplicação do Katapult.
-
-## Testes
+## Tests
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-A CI do GitHub (`.github/workflows/tests.yml`) corre os testes em Python 3.8, 3.9, 3.11 e 3.13 e o shellcheck.
+GitHub CI (`.github/workflows/tests.yml`) runs Python 3.8, 3.9, 3.11, 3.13 and shellcheck.
 
-## Licença
+## Licence
 
-Por definir (sem licença, o código é "todos os direitos reservados"; escolhe uma antes de o tornares
-público). Não foi copiado código do KIAUH. O KIAUH e o Katapult são GPL-3.0: se um dia
-copiares código deles para aqui, o resultado distribuído tem de ser GPL-3.0.
+Not chosen yet; without one the code is "all rights reserved". Choose before making it public. No
+KIAUH code was copied; KIAUH and Katapult are GPL-3.0, so copying code from them would make the
+result GPL-3.0.

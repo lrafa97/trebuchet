@@ -1,11 +1,11 @@
-# Exemplo de perfil: copia a pasta para ~/trebuchet_data/profiles/<id>/ e preenche com
-# valores que tenhas confirmado na TUA board. Nada aqui é uma recomendação.
-name = "EXEMPLO - substituir pelo nome da board"
-mcu = "stm32xxxx (o que confirmaste)"
+# Profile example: copy the folder to ~/trebuchet_data/profiles/<id>/ and fill it in with
+# values you have confirmed on YOUR board. Nothing here is a recommendation.
+name = "EXAMPLE - replace with the board name"
+mcu = "stm32xxxx (what you confirmed)"
 family = "stm32"                    # stm32 | rp2040 | other
 interface = "can"                   # usb | can | usb-can-bridge | uart
 first_katapult_method = "dfu"       # dfu | bootsel | stm32flash | stlink | deployer | other
-can_bitrate = 1000000               # só para can e usb-can-bridge
-# uart_baud = 250000                # só para uart
-dfu_heater_warning = true           # false para desligar o aviso desta board
-notes = "ficheiros klipper.config e katapult.config ao lado deste, os que já funcionam"
+can_bitrate = 1000000               # only for can and usb-can-bridge
+# uart_baud = 250000                # only for uart
+dfu_heater_warning = true           # false to turn off the warning for this board
+notes = "klipper.config and katapult.config files next to this one, the ones that already work"

@@ -1,8 +1,11 @@
-"""Registo de estado por board (JSON), escrito pelo programa.
+"""State the program remembers (JSON), written by the program.
 
-Guarda o que o programa sabe depois de ter feito algo: se a board tem Katapult,
-que build foi gravada e quando. Não é a fonte de verdade sobre o hardware:
-o que está aqui pode estar desatualizado se alguém gravou a board por fora.
+  machines/<machine>/<label>   what we did to each board: Katapult yes/no/unknown, last build
+  boards/<uuid:..|serial:..>   which profile and label a physical board was identified as, so the
+                               next run recognises it without asking again
+
+Not a source of truth about the hardware: it can be out of date if someone flashed a board
+outside this program.
 """
 from __future__ import annotations
 
@@ -16,7 +19,7 @@ from .profiles import KATAPULT_STATES
 class Registry:
     def __init__(self, path: Path):
         self.path = path
-        self._data: dict = {"machines": {}}
+        self._data: dict = {"machines": {}, "boards": {}}
         self.load()
 
     def load(self) -> None:
@@ -24,8 +27,9 @@ class Registry:
             try:
                 self._data = json.loads(self.path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
-                self._data = {"machines": {}}
+                self._data = {"machines": {}, "boards": {}}
         self._data.setdefault("machines", {})
+        self._data.setdefault("boards", {})
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,9 +53,32 @@ class Registry:
 
     def set_katapult(self, machine: str, label: str, state: str) -> None:
         if state not in KATAPULT_STATES:
-            raise ValueError(f"estado inválido: {state}")
+            raise ValueError(f"invalid state: {state}")
         self.update(machine, label, katapult=state)
 
     def forget_machine(self, machine: str) -> None:
         self._data["machines"].pop(machine, None)
+        self.save()
+
+    # -- identities of physical boards -----------------------------------------------
+    @staticmethod
+    def board_key(uuid: str = "", serial: str = "") -> str:
+        """uuid for CAN nodes, USB serial for USB boards. '' when neither is known."""
+        if uuid:
+            return f"uuid:{uuid.lower()}"
+        if serial:
+            return f"serial:{serial}"
+        return ""
+
+    def remember_board(self, key: str, profile_id: str, label: str) -> None:
+        if key:
+            self._data["boards"][key] = {"profile": profile_id, "label": label,
+                                         "updated": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            self.save()
+
+    def recall_board(self, key: str) -> dict:
+        return dict(self._data["boards"].get(key, {})) if key else {}
+
+    def forget_board(self, key: str) -> None:
+        self._data["boards"].pop(key, None)
         self.save()

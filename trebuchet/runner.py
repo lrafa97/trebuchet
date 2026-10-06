@@ -1,8 +1,8 @@
-"""Execução de comandos externos com dry-run e registo em ficheiro.
+"""Run external commands with dry-run support and file logging.
 
-Em dry-run só são suprimidos os comandos marcados como `mutating=True`
-(gravar, reiniciar serviços, copiar firmware). Comandos de leitura (lsusb,
-ip link, canbus_query) correm sempre.
+In dry-run only commands marked `mutating=True` are suppressed (flashing,
+restarting services, copying firmware). Read-only commands (lsusb, ip link,
+canbus_query) always run.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class Runner:
         self.log_file = log_file
         self.echo = echo
 
-    # -- registo ---------------------------------------------------------------
+    # -- logging ---------------------------------------------------------------
     def _log(self, line: str) -> None:
         if not self.log_file:
             return
@@ -42,13 +42,13 @@ class Runner:
             with self.log_file.open("a", encoding="utf-8") as fh:
                 fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
         except OSError:
-            pass  # o registo nunca deve impedir uma operação
+            pass  # logging must never block an operation
 
     def _say(self, text: str) -> None:
         if self.echo:
             self.echo(text)
 
-    # -- execução --------------------------------------------------------------
+    # -- execution --------------------------------------------------------------
     def run(self, cmd: Sequence[str], *, cwd: Path | None = None,
             mutating: bool = False, stream: bool = False,
             timeout: float | None = None) -> Result:
@@ -69,9 +69,9 @@ class Runner:
                                     timeout=timeout)
                 res = Result(cmd, cp.returncode, (cp.stdout or "") + (cp.stderr or ""))
         except FileNotFoundError:
-            res = Result(cmd, 127, f"comando não encontrado: {cmd[0]}")
+            res = Result(cmd, 127, f"command not found: {cmd[0]}")
         except subprocess.TimeoutExpired:
-            res = Result(cmd, 124, f"tempo esgotado ({timeout}s): {shown}")
+            res = Result(cmd, 124, f"timed out ({timeout}s): {shown}")
 
         self._log(f"EXIT {res.returncode} {shown}")
         if res.returncode != 0:
@@ -91,11 +91,11 @@ class Runner:
         return Result(cmd, proc.returncode, "".join(lines))
 
     def call_interactive(self, cmd: Sequence[str], *, cwd: Path | None = None) -> int:
-        """Para o menuconfig: passa o terminal diretamente ao processo."""
+        """For menuconfig: hand the terminal directly to the process."""
         cmd = [str(c) for c in cmd]
         self._log(f"INTERACTIVE {shlex.join(cmd)}")
         try:
             return subprocess.call(cmd, cwd=cwd)
         except FileNotFoundError:
-            self._say(f"comando não encontrado: {cmd[0]}")
+            self._say(f"command not found: {cmd[0]}")
             return 127

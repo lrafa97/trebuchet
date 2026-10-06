@@ -1,13 +1,13 @@
-"""Perfis de board e definição de máquinas (ficheiros TOML).
+"""Board profiles and machine definitions (TOML files).
 
-Perfil  = o que é a board (MCU, interface, como grava o 1.º Katapult) + os
-          ficheiros .config do Klipper e do Katapult que JÁ funcionam.
-Máquina = quais boards existem num setup e como identificá-las (UUID/serial).
+Profile = what the board is (MCU, interface, how the first Katapult is flashed)
+          + the Klipper and Katapult .config files that ALREADY work.
+Machine = which boards exist in a setup and how to identify them (UUID/serial).
 
-Layout em disco:
+On-disk layout:
     <data>/profiles/<id>/profile.toml
     <data>/profiles/<id>/klipper.config
-    <data>/profiles/<id>/katapult.config      (opcional)
+    <data>/profiles/<id>/katapult.config      (optional)
     <data>/machines/<nome>.toml
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from . import tomlmini
 from .discover import chip_core
 from .tomlmini import TOMLDecodeError
 
-# Âmbito da v1: só o que a documentação do Katapult cobre e que escolhemos suportar.
+# v1 scope: only what the Katapult documentation covers and what we chose to support.
 SUPPORTED_FAMILIES = ("stm32", "rp2040")
 FAMILIES = SUPPORTED_FAMILIES + ("other",)
 INTERFACES = ("usb", "can", "usb-can-bridge", "uart")
@@ -33,10 +33,10 @@ _SLUG = re.compile(r"[^a-z0-9._-]+")
 
 def slugify(text: str) -> str:
     s = _SLUG.sub("-", text.strip().lower()).strip("-")
-    return s or "sem-nome"
+    return s or "unnamed"
 
 
-# --- TOML (leitura com tomllib ou, em Python < 3.11, tomlmini; escrita mínima) -------------------------------
+# --- TOML (read with tomllib or, on Python < 3.11, tomlmini; minimal writer) -------------------------------
 def _toml_value(v) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -46,7 +46,7 @@ def _toml_value(v) -> str:
 
 
 def dump_toml(data: dict, array_key: str | None = None) -> str:
-    """Escreve um dict plano e, opcionalmente, uma lista de dicts em [[array_key]]."""
+    """Write a flat dict and, optionally, a list of dicts under [[array_key]]."""
     lines: list[str] = []
     for k, v in data.items():
         if k == array_key or v is None:
@@ -73,7 +73,7 @@ def _load_toml(path: Path) -> dict:
 class BoardProfile:
     id: str
     name: str
-    mcu: str                      # texto livre, confirmado pelo utilizador (ex.: stm32f446)
+    mcu: str                      # free text, confirmed by the user (e.g. stm32f446)
     family: str                   # stm32 | rp2040 | other
     interface: str                # usb | can | usb-can-bridge | uart
     first_katapult_method: str    # dfu | bootsel | stm32flash | stlink | deployer | other
@@ -81,6 +81,7 @@ class BoardProfile:
     uart_baud: int | None = None
     dfu_heater_warning: bool = True
     notes: str = ""
+    catalog_id: str = ""          # catalog entry this profile came from (e.g. generic-fysetc-spider)
     dir: Path = field(default=Path("."), repr=False)
 
     @property
@@ -102,18 +103,18 @@ class BoardProfile:
     def problems(self) -> list[str]:
         out: list[str] = []
         if self.family not in FAMILIES:
-            out.append(f"família inválida: {self.family!r}")
+            out.append(f"invalid family: {self.family!r}")
         if self.interface not in INTERFACES:
-            out.append(f"interface inválida: {self.interface!r}")
+            out.append(f"invalid interface: {self.interface!r}")
         if self.first_katapult_method not in FIRST_KATAPULT_METHODS:
-            out.append(f"método do 1.º Katapult inválido: {self.first_katapult_method!r}")
+            out.append(f"invalid first-Katapult method: {self.first_katapult_method!r}")
         if self.family in ("stm32", "rp2040") and not chip_core(self.mcu):
-            out.append(f"MCU não reconhecido ({self.mcu!r}): escreve-o como stm32f446, stm32g0b1 "
-                       "ou rp2040 (sem isto não valido o chip contra a board)")
+            out.append(f"MCU not recognised ({self.mcu!r}): write it as stm32f446, stm32g0b1 "
+                       "or rp2040 (without this the chip cannot be validated against the board)")
         if self.is_can and not self.can_bitrate:
-            out.append("interface CAN sem can_bitrate")
+            out.append("CAN interface without can_bitrate")
         if not self.klipper_config.exists():
-            out.append(f"falta {self.klipper_config.name} no perfil")
+            out.append(f"{self.klipper_config.name} missing from the profile")
         return out
 
     def to_dict(self) -> dict:
@@ -123,6 +124,7 @@ class BoardProfile:
             "first_katapult_method": self.first_katapult_method,
             "can_bitrate": self.can_bitrate, "uart_baud": self.uart_baud,
             "dfu_heater_warning": self.dfu_heater_warning, "notes": self.notes,
+            "catalog_id": self.catalog_id,
         }
 
 
@@ -139,6 +141,7 @@ def load_profile(profile_dir: Path) -> BoardProfile:
         uart_baud=data.get("uart_baud"),
         dfu_heater_warning=data.get("dfu_heater_warning", True),
         notes=data.get("notes", ""),
+        catalog_id=data.get("catalog_id", ""),
         dir=profile_dir,
     )
 
@@ -164,15 +167,15 @@ def save_profile(profiles_dir: Path, profile: BoardProfile) -> Path:
     return d
 
 
-# --- Máquina ------------------------------------------------------------------
+# --- Machine ------------------------------------------------------------------
 @dataclass
 class MachineBoard:
-    label: str                    # nome curto na máquina: main, toolhead, ...
+    label: str                    # short name on the machine: main, toolhead, ...
     profile_id: str
-    uuid: str = ""                # canbus_uuid (12 hex) para nós CAN / bridge
-    serial: str = ""              # serial USB (parte final do nome em by-id)
-    device: str = ""              # caminho explícito (obrigatório em UART)
-    chip: str = ""                # MCU visto na descoberta (ex.: stm32f446xx); valida o perfil
+    uuid: str = ""                # canbus_uuid (12 hex) for CAN nodes / bridge
+    serial: str = ""              # USB serial (last part of the by-id name)
+    device: str = ""              # explicit path (required for UART)
+    chip: str = ""                # MCU seen during discovery (e.g. stm32f446xx); validates the profile
 
     def to_dict(self) -> dict:
         return {"label": self.label, "profile": self.profile_id, "uuid": self.uuid,

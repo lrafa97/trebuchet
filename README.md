@@ -29,7 +29,7 @@ Os comandos instalados são `treb` e `trebuchet` (o mesmo programa). Para os rem
 
 | Coisa | Quem trata | Notas |
 |---|---|---|
-| **Python 3.11+** | já vem no sistema | O Pi 5 exige Raspberry Pi OS Bookworm ou mais recente, que traz o 3.11. O Katapult **não** instala Python: o `flashtool.py` usa o `python3` do sistema. |
+| **Python 3.8+** | já vem no sistema | Bullseye (3.9) e Bookworm (3.11) servem, por isso corre em qualquer Pi, do 3 ao 5. Abaixo de 3.11 usa um leitor de TOML próprio (`trebuchet/tomlmini.py`), sem `pip`. O Katapult **não** instala Python: o `flashtool.py` usa o `python3` do sistema. |
 | **pyserial** | `install.sh` (apt `python3-serial`) | Pedido pelo README do Katapult para USB/UART. Vem do apt porque no Bookworm o pip recusa instalar no Python do sistema. |
 | **Klipper** (código-fonte) | tu, ou `--with-klipper-source` | Precisa de existir `~/klipper`. Se já usas o Klipper, está lá. Sem ele o Trebuchet não compila firmware. |
 | **Katapult** | `install.sh` (clona para `~/katapult`) | Não mexe numa instalação que já exista (`--update` faz `git pull`). |
@@ -134,7 +134,7 @@ Verificado contra o código real (Klipper e Katapult clonados pelo instalador):
 python3 -m unittest discover -s tests -v
 ```
 
-A CI do GitHub (`.github/workflows/tests.yml`) corre os testes em Python 3.11, 3.12 e 3.13 e o shellcheck.
+A CI do GitHub (`.github/workflows/tests.yml`) corre os testes em Python 3.8, 3.9, 3.11 e 3.13 e o shellcheck.
 
 ## Licença
 

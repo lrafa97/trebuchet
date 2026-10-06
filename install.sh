@@ -74,8 +74,8 @@ step "1/6 Python"
 if ! command -v python3 >/dev/null 2>&1; then
   die "python3 não encontrado. Instala-o: sudo apt install python3"
 fi
-if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
-  die "Precisas de Python 3.11 ou mais recente (tens $(python3 -V 2>&1)). O Raspberry Pi 5 exige Raspberry Pi OS Bookworm ou mais recente, que já traz o 3.11."
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'; then
+  die "Precisas de Python 3.8 ou mais recente (tens $(python3 -V 2>&1)). O Raspberry Pi OS Bullseye (Python 3.9) e Bookworm servem; o Buster (3.7) já é demasiado antigo."
 fi
 say "ok: $(python3 -V)"
 

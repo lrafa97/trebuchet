@@ -381,7 +381,7 @@ class App:
         s = self.s
         flashtool = s.find_flashtool()
         checks: list[tuple[str, bool, str]] = [
-            ("Python >= 3.11 (tomllib)", sys.version_info >= (3, 11), sys.version.split()[0]),
+            ("Python >= 3.8", sys.version_info >= (3, 8), sys.version.split()[0]),
             ("pyserial (python3-serial)", importlib.util.find_spec("serial") is not None,
              "preciso para o flashtool.py em USB/UART"),
             ("git", shutil.which("git") is not None, ""),

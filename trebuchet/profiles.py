@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import tomlmini
+from .tomlmini import TOMLDecodeError
 
 # Âmbito da v1: só o que a documentação do Katapult cobre e que escolhemos suportar.
 SUPPORTED_FAMILIES = ("stm32", "rp2040")
@@ -33,7 +35,7 @@ def slugify(text: str) -> str:
     return s or "sem-nome"
 
 
-# --- TOML (leitura com tomllib; escrita mínima) -------------------------------
+# --- TOML (leitura com tomllib ou, em Python < 3.11, tomlmini; escrita mínima) -------------------------------
 def _toml_value(v) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -62,7 +64,7 @@ def dump_toml(data: dict, array_key: str | None = None) -> str:
 
 def _load_toml(path: Path) -> dict:
     with path.open("rb") as fh:
-        return tomllib.load(fh)
+        return tomlmini.load(fh)
 
 
 # --- Perfil -------------------------------------------------------------------
@@ -145,7 +147,7 @@ def list_profiles(profiles_dir: Path) -> list[BoardProfile]:
         if (d / "profile.toml").exists():
             try:
                 out.append(load_profile(d))
-            except (tomllib.TOMLDecodeError, OSError):
+            except (TOMLDecodeError, OSError):
                 continue
     return out
 
@@ -214,7 +216,7 @@ def list_machines(machines_dir: Path) -> list[Machine]:
     for p in sorted(machines_dir.glob("*.toml")):
         try:
             out.append(load_machine(p))
-        except (tomllib.TOMLDecodeError, OSError, KeyError):
+        except (TOMLDecodeError, OSError, KeyError):
             continue
     return out
 

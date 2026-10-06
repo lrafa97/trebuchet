@@ -12,6 +12,7 @@ from trebuchet import detect, flasher  # noqa: E402
 from trebuchet.advisor import ERROR, advise  # noqa: E402
 from trebuchet.builder import BuildError, build_firmware, load_build  # noqa: E402
 from trebuchet.config import Settings  # noqa: E402
+from trebuchet import profiles  # noqa: E402
 from trebuchet.executor import execute_plan  # noqa: E402
 from trebuchet.flasher import Flasher  # noqa: E402
 from trebuchet.profiles import (BoardProfile, Machine, MachineBoard, list_machines,  # noqa: E402
@@ -346,7 +347,57 @@ class CLI(unittest.TestCase):
     def test_doctor_runs(self):
         r = self.run_cli(["doctor"])
         self.assertIn("Diagnóstico", r.stdout)
-        self.assertIn("Python >= 3.11", r.stdout)
+        self.assertIn("Python >= 3.8", r.stdout)
+
+
+class TomlMiniTests(unittest.TestCase):
+    """O leitor próprio (usado em Python < 3.11) tem de ler igual ao tomllib."""
+
+    SAMPLE = (
+        '# comentário\n'
+        'id = "octopus-pro" # fim de linha com # dentro "de aspas"\n'
+        "name = 'Octopus \\ Pro'\n"
+        'bitrate = 1_000_000\n'
+        'ratio = 1.5\n'
+        'on = true\n'
+        'path = "C:\\\\dir\\t\\u00e9"\n'
+        'tags = ["a", "b # c", 3]\n'
+        'note = "tem # cardinal"\n'
+        '\n[[board]]\nlabel = "mcu"\nuuid = "abc"\n'
+        '\n[[board]]\nlabel = "toolhead"\n'
+    )
+
+    def test_matches_tomllib(self):
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            self.skipTest("sem tomllib neste Python")
+        from trebuchet import tomlmini
+        self.assertEqual(tomlmini.loads(self.SAMPLE), tomllib.loads(self.SAMPLE))
+
+    def test_values(self):
+        from trebuchet import tomlmini
+        d = tomlmini.loads(self.SAMPLE)
+        self.assertEqual(d["bitrate"], 1000000)
+        self.assertIs(d["on"], True)
+        self.assertEqual(d["tags"], ["a", "b # c", 3])
+        self.assertEqual(d["note"], "tem # cardinal")
+        self.assertEqual([b["label"] for b in d["board"]], ["mcu", "toolhead"])
+
+    def test_roundtrip_with_our_writer(self):
+        from trebuchet import tomlmini
+        data = {"name": "Máquina \"X\"", "can_interface": "can0",
+                "board": [{"label": "a", "profile": "p"}, {"label": "b", "uuid": "1"}]}
+        back = tomlmini.loads(profiles.dump_toml(data, array_key="board"))
+        self.assertEqual(back["name"], data["name"])
+        self.assertEqual(back["board"], data["board"])
+
+    def test_rejects_unsupported_and_invalid(self):
+        from trebuchet import tomlmini
+        for bad in ('a = {x = 1}', 'a = """x"""', 'a = ', 'a = "x', 'a.b = 1',
+                    'a = 1\na = 2', 'sem igual', 'a = 2020-01-01', '[t]\n[t]'):
+            with self.assertRaises(tomlmini.TOMLDecodeError, msg=bad):
+                tomlmini.loads(bad)
 
 
 if __name__ == "__main__":

@@ -162,10 +162,12 @@ class App:
                 profs.append(p)
             else:
                 p = cands[idx]
-            label = slugify(io.ask("Nome desta board na máquina", x.name))
+            label = slugify(x.name)
             if m.board(label):
-                io.warn("Já existe uma board com esse nome; ignorada.")
-                continue
+                label = slugify(io.ask(f"Já existe '{label}' nesta máquina. Outro nome", f"{label}-2"))
+                if m.board(label):
+                    io.warn("Também já existe; board ignorada.")
+                    continue
             m.boards.append(MachineBoard(label=label, profile_id=p.id, uuid=x.uuid,
                                          serial=x.serial, device=x.device,
                                          chip=x.chip))
@@ -388,7 +390,6 @@ class App:
             io.warn(f"Catálogo vazio: não encontrei boards em {self.s.klipper_dir / 'config'}. "
                     "Cria o perfil do zero (ou acrescenta boards em catalog.toml).")
             return None
-        hidden = len(entries) - len(usable)
         e = None
         if suggestions:
             self.show_suggestions(suggestions)
@@ -425,8 +426,6 @@ class App:
         io.say(f"\nO que o Klipper diz sobre esta board ({Path(e.source).name}):")
         for line in e.notes.splitlines():
             io.say(f"  | {line}")
-        if hidden:
-            io.say(f"\n({hidden} boards do catálogo ficam fora da v1: AVR, LPC, SAM, ...)")
         chip = e.chip
         if len(e.chips) > 1:
             ci = io.choose("O texto menciona vários chips (a board tem variantes). Qual é o da tua?",
@@ -452,21 +451,30 @@ class App:
         name = io.ask("Nome da board (ex.: EBB42 1.2 BTT)", entry.name if entry else "")
         if not name:
             return None
-        pid = slugify(io.ask("Identificador do perfil", slugify(name)))
+        pid = slugify(name)
+        if (self.s.profiles_dir / pid / "profile.toml").exists() and not io.confirm(
+                f"Já existe um perfil '{pid}'. Substituir?", default=False):
+            return None
         known_family = ("stm32" if chip.lower().startswith("stm32")
                         else "rp2040" if chip.lower().startswith("rp2040") else "")
         if known_family:
             family = known_family
-            io.say(f"Família {family} (do chip visto: {chip}).")
         else:
             fam_i = io.choose("Família do MCU (a v1 só suporta stm32 e rp2040)", list(FAMILIES))
             if fam_i is None:
                 return None
             family = FAMILIES[fam_i]
-        mcu = io.ask("MCU exato (ex.: stm32f446; só o que tiveres confirmado)",
-                     discover.chip_core(chip) or chip)
+        mcu = discover.chip_core(chip)       # já sabido (catálogo ou descoberta): não se pergunta
+        while not mcu:
+            typed = io.ask("MCU exato (ex.: stm32f446 ou rp2040; só o que tiveres confirmado)")
+            mcu = discover.chip_core(typed)
+            if not mcu:
+                io.warn(f"Não reconheço '{typed}'. Escreve o MCU como stm32f446, stm32g0b1 ou rp2040.")
+                if not typed:
+                    return None
+        io.say(f"{name}: {family}, {mcu}.")
         if interface in INTERFACES:
-            io.say(f"Interface {interface} (do que está ligado).")
+            io.say(f"Interface: {interface} (do que está ligado).")
         else:
             if entry:
                 io.say(f"Palpite pelo nome do ficheiro: {entry.interface_hint}. Confirma no texto acima.")
@@ -474,17 +482,21 @@ class App:
             if if_i is None:
                 return None
             interface = INTERFACES[if_i]
-        m_i = io.choose("Como se grava o 1.º Katapult nesta board?", list(FIRST_KATAPULT_METHODS))
-        if m_i is None:
-            return None
+        habitual = {"stm32": "dfu", "rp2040": "bootsel"}.get(family, "other")
+        if io.confirm(f"1.º Katapult por {habitual}? (o habitual em {family}; há um guia por método)",
+                      default=True):
+            method = habitual
+        else:
+            m_i = io.choose("Como se grava o 1.º Katapult nesta board?", list(FIRST_KATAPULT_METHODS))
+            if m_i is None:
+                return None
+            method = FIRST_KATAPULT_METHODS[m_i]
         bitrate = int(io.ask("Bitrate CAN", "1000000")) if interface in ("can", "usb-can-bridge") else None
         baud = int(io.ask("Baud rate UART", "250000")) if interface == "uart" else None
         p = BoardProfile(
             id=pid, name=name, mcu=mcu, family=family, interface=interface,
-            first_katapult_method=FIRST_KATAPULT_METHODS[m_i], can_bitrate=bitrate, uart_baud=baud,
-            dfu_heater_warning=io.confirm("Avisar para desligar aquecedores em DFU?", default=True),
-            notes=io.ask("Notas (opcional)", (" ".join(entry.notes.split())[:400]
-                                              + f" [fonte: {Path(entry.source).name}]") if entry else ""))
+            first_katapult_method=method, can_bitrate=bitrate, uart_baud=baud,
+            notes=f"Catálogo do Klipper: {Path(entry.source).name}" if entry else "")
         d = save_profile(self.s.profiles_dir, p)
         self._attach_config(p, d / "klipper.config", "klipper", required=True)
         self._attach_config(p, d / "katapult.config", "katapult", required=False)

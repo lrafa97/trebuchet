@@ -528,7 +528,7 @@ class DiscoverTests(unittest.TestCase):
             by_id.mkdir()
             (by_id / "usb-Klipper_stm32f446xx_AAA111-if00").write_text("")
             make_profile(s, "octo", interface="usb", mcu="stm32f446")
-            io = IO(["maq", "", "s"])
+            io = IO(["maq", "s"])
             app = App(s, io)
             orig = discover.discover
             discover.discover = lambda settings, runner, **kw: orig(
@@ -600,7 +600,7 @@ class DiscoverTests(unittest.TestCase):
             s.printer_cfg = str(cfg)
             make_profile(s, "octo", interface="usb", mcu="stm32f446")
             make_profile(s, "ebb", interface="can", mcu="stm32g0b1", bitrate=1000000)
-            io = ScriptedIO(["minha-maquina", "", "s", "", "n", "", "n"])
+            io = ScriptedIO(["minha-maquina", "s", "n", "n"])
             app = App(s, io)
             orig = discover.discover
             discover.discover = lambda settings, runner, **kw: orig(
@@ -754,13 +754,26 @@ class ProfileFromDiscoveryTests(unittest.TestCase):
             s, _ = make_env(tmp)
             cfg = tmp / "w.config"
             cfg.write_text("CONFIG_MACH_STM32=y\n")
-            io = IO(["EBB42 1.2 BTT", "", "", "", "", str(cfg), str(cfg)])
+            io = IO(["EBB42 1.2 BTT", "", str(cfg), str(cfg)])
             p = App(s, io).new_profile(chip="stm32g0b1xx", interface="can")
             self.assertEqual((p.family, p.mcu, p.interface), ("stm32", "stm32g0b1", "can"))
             self.assertEqual(p.id, "ebb42-1.2-btt")
             self.assertTrue(p.klipper_config.exists())
-            # não perguntou família nem interface: já se sabiam
-            self.assertFalse(any("Família" in q or "Interface com o Pi" in q for q in io.asked))
+            # não perguntou família, MCU, interface, identificador nem notas: já se sabiam
+            for q in io.asked:
+                for banned in ("Família", "Interface com o Pi", "MCU exato", "Identificador", "Notas"):
+                    self.assertNotIn(banned, q)
+            self.assertTrue(p.dfu_heater_warning)
+
+
+    def test_profile_with_mcu_typo_is_flagged(self):
+        with tempfile.TemporaryDirectory() as t:
+            s, _ = make_env(Path(t))
+            p = make_profile(s, "ebb", interface="can", mcu="smt32g0b1", bitrate=500000)
+            self.assertTrue(any("MCU não reconhecido" in x for x in p.problems()))
+            m = Machine(name="x", boards=[MachineBoard(label="th", profile_id="ebb", uuid="aabbccddeeff")])
+            plan = advise(m, {"ebb": p}, {"th": "yes"})
+        self.assertTrue(plan.has_errors)
 
 
 class UiTests(unittest.TestCase):

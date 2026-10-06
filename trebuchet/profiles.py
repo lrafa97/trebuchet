@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import tomlmini
+from .discover import chip_core
 from .tomlmini import TOMLDecodeError
 
 # Âmbito da v1: só o que a documentação do Katapult cobre e que escolhemos suportar.
@@ -106,6 +107,9 @@ class BoardProfile:
             out.append(f"interface inválida: {self.interface!r}")
         if self.first_katapult_method not in FIRST_KATAPULT_METHODS:
             out.append(f"método do 1.º Katapult inválido: {self.first_katapult_method!r}")
+        if self.family in ("stm32", "rp2040") and not chip_core(self.mcu):
+            out.append(f"MCU não reconhecido ({self.mcu!r}): escreve-o como stm32f446, stm32g0b1 "
+                       "ou rp2040 (sem isto não valido o chip contra a board)")
         if self.is_can and not self.can_bitrate:
             out.append("interface CAN sem can_bitrate")
         if not self.klipper_config.exists():

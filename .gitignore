@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+.idea/
+.vscode/
+# dados locais de quem usa o programa (perfis, builds, registo) nunca vão para o repositório
+trebuchet_data/
+*.zip

@@ -1,0 +1,5 @@
+# Força quebras de linha LF em todos os ficheiros de texto, mesmo se editares no Windows.
+# Sem isto, um install.sh com CRLF falha no Pi ("bad interpreter: /usr/bin/env bash^M").
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf

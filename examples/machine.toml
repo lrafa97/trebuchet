@@ -1,0 +1,15 @@
+# Exemplo de máquina: ~/trebuchet_data/machines/<nome>.toml
+# O menu gera este ficheiro; também o podes editar à mão.
+name = "cliente-exemplo"
+can_interface = "can0"
+
+[[board]]
+label = "bridge"
+profile = "id-do-perfil-da-bridge"
+uuid = "aabbccddeeff"               # canbus_uuid da bridge (12 hex)
+serial = ""                         # serial USB, se houver várias boards USB
+
+[[board]]
+label = "toolhead"
+profile = "id-do-perfil-do-toolhead"
+uuid = "112233445566"

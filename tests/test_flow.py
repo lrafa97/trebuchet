@@ -68,7 +68,7 @@ class UpdateFlowTests(unittest.TestCase):
             io = ScriptedIO([("Which board is this", 0),
                              ("Klipper firmware settings", 1),          # use the current .config
                              ("already have Katapult", 0),               # yes
-                             ("What now", 2)],                           # save and exit
+                             ("What now", 1)],                           # save and exit
                             asks=["bench"])
             app = App(s, io)
             orig = patched_discovery(tmp, by_id)
@@ -86,6 +86,8 @@ class UpdateFlowTests(unittest.TestCase):
             self.assertTrue(prof.klipper_config.exists())
             self.assertEqual(app.reg.katapult("bench", m.boards[0].label), "yes")
             self.assertEqual(len(list_machines(s.machines_dir)), 1)
+            from trebuchet.builder import load_build
+            self.assertIsNotNone(load_build(s, "bench", m.boards[0].label, "klipper"))   # built at creation
 
     def test_board_is_recognised_next_time(self):
         with tempfile.TemporaryDirectory() as t:
@@ -216,7 +218,7 @@ class RepairTests(unittest.TestCase):
                              ("Brand", 0), ("Board:", 0),
                              ("Klipper firmware settings", 1),                   # current .config
                              ("How is the first Katapult", lambda o: 0),
-                             ("What now", 2)])
+                             ("What now", 1)])
             app = App(s, io)
             app.save(m)
             UpdateFlow(app).plan_and_run(m)
@@ -255,7 +257,7 @@ class OrderTests(unittest.TestCase):
                              ("Klipper firmware settings", use_current_config),
                              ("How is the first Katapult", lambda o: 0),
                              ("already have Katapult", 0),
-                             ("What now", 2)], asks=["bench"])
+                             ("What now", 1)], asks=["bench"])
             io.current_chip = ""
             orig_title = io.title
             def title(text):
@@ -304,7 +306,7 @@ class ChoiceTests(unittest.TestCase):
             make_profile(s, "b", interface="usb", mcu="stm32f446")
             m = Machine("bench", "can0", [MachineBoard("one", "a", serial="1"), MachineBoard("two", "b", serial="2")])
             picks = iter([1])                                           # toggle board 2, then done
-            io = ScriptedIO([("Which boards", 1), ("Select a board", lambda o: next(picks, None))])
+            io = ScriptedIO([("Which boards", 2), ("Select a board", lambda o: next(picks, None))])
             app = App(s, io)
             app.save(m)
             sub = UpdateFlow(app)._select_boards(m)
@@ -314,3 +316,17 @@ class ChoiceTests(unittest.TestCase):
             app.run_plan(sub, "build", save_as=m)
             from trebuchet.profiles import load_machine
             self.assertEqual(len(load_machine(s.machines_dir / "bench.toml").boards), 2)
+
+
+class SingleBoardTests(unittest.TestCase):
+    def test_one_board_can_be_chosen_and_the_rest_is_left_alone(self):
+        from trebuchet.update_flow import UpdateFlow
+        with tempfile.TemporaryDirectory() as t:
+            s, _ = make_env(Path(t))
+            make_profile(s, "a", interface="usb", mcu="stm32f446")
+            make_profile(s, "b", interface="usb", mcu="stm32f446")
+            m = Machine("bench", "can0", [MachineBoard("one", "a", serial="1"), MachineBoard("two", "b", serial="2")])
+            io = ScriptedIO([("Which boards", 1), ("Which board?", 1)])
+            sub = UpdateFlow(App(s, io))._select_boards(m)
+            self.assertEqual([b.label for b in sub.boards], ["two"])
+            self.assertIn("Not touching: one", io.text)

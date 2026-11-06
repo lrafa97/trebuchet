@@ -194,7 +194,7 @@ class App:
     def machine_menu(self, m: Machine) -> None:
         while True:
             k = self.io.menu(f"Machine: {m.name}", [
-                "Update (plan, build, flash)",
+                "Update (rebuild, then flash all or one board)",
                 "Board status",
                 "Advice and plan",
                 "Build firmware",
@@ -204,13 +204,15 @@ class App:
             if k is None:
                 return
             if k == 0:
-                UpdateFlow(self).plan_and_run(m)
+                UpdateFlow(self).plan_and_run(m, rebuild=True)
             elif k == 1:
                 self.show_state(m)
             elif k == 2:
                 self.show_plan(self.plan_for(m))
             elif k in (3, 4):
-                self.run_phase(m, "build" if k == 3 else "flash")
+                m_run = UpdateFlow(self)._select_boards(m)
+                if m_run is not None:
+                    self.run_phase(m_run, "build" if k == 3 else "flash", save_as=m)
             elif k == 5:
                 self.edit_boards(m)
 
@@ -223,7 +225,7 @@ class App:
                         KAT_LABEL[self.reg.katapult(m.slug, b.label)],
                         self.reg.get(m.slug, b.label).get("klipper_version", "-")) for b in m.boards])
 
-    def run_phase(self, m: Machine, phase: str) -> bool:
+    def run_phase(self, m: Machine, phase: str, save_as: "Machine | None" = None) -> bool:
         plan = self.plan_for(m)
         self.show_plan(plan)
         if plan.has_errors:
@@ -234,7 +236,7 @@ class App:
         if not self.io.confirm(f"\n{what.capitalize()} now?", default=False):
             return False
         return execute_plan(plan, m, self.profiles(), self.s, self.runner, self.reg, self.flasher,
-                            self.io, self.save, phase=phase)
+                            self.io, lambda _m: self.save(save_as or m), phase=phase)
 
     def edit_boards(self, m: Machine) -> None:
         io = self.io

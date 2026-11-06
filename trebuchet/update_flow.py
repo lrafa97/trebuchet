@@ -13,6 +13,7 @@ from typing import Optional
 
 from . import catalog, discover, matching
 from .advisor import ERROR
+from .builder import BuildError, build_firmware, load_build
 from .profile_wizard import ProfileWizard
 from .profiles import BoardProfile, Machine, MachineBoard, list_machines, slugify
 
@@ -41,7 +42,7 @@ class UpdateFlow:
     # -- saved machine ---------------------------------------------------------------
     def update_saved(self, m: Machine) -> None:
         self.app.show_state(m)
-        self.plan_and_run(m)
+        self.plan_and_run(m, rebuild=True)
 
     # -- new machine -----------------------------------------------------------------
     def new_machine(self) -> Optional[Machine]:
@@ -82,7 +83,7 @@ class UpdateFlow:
             m.boards.append(mb)
             self.app.reg.remember_board(self.app.reg.board_key(dev.uuid, dev.serial), profile.id, label)
             self._seed_katapult_state(m, mb, dev)
-            self.prepare_board(m, mb)
+            self.prepare_board(m, mb, build=True)
 
         if not m.boards:
             io.warn("No board was added; nothing saved.")
@@ -173,10 +174,10 @@ class UpdateFlow:
         if state:
             self.app.reg.set_katapult(m.slug, mb.label, state)
 
-    def prepare_board(self, m: Machine, b: MachineBoard) -> None:
+    def prepare_board(self, m: Machine, b: MachineBoard, build: bool = False) -> None:
         """Everything one board needs, in order, before moving on to the next:
-        profile (already chosen) -> does it have Katapult? -> Katapult config if it needs one.
-        Already-known answers are not asked again."""
+        profile (already chosen) -> does it have Katapult? -> Katapult config if it needs one
+        -> build (new boards only). Already-known answers are not asked again."""
         io = self.io
         p = self.app.profiles().get(b.profile_id)
         if p is None or p.problems():
@@ -187,7 +188,30 @@ class UpdateFlow:
         if state == "no":
             if not ProfileWizard(self.s, io, self.app.runner).ensure_katapult_config(p):
                 io.warn(f"No Katapult config for '{b.label}': the plan will not include it.")
-        io.ok(self._summary(m, b, p, state))
+        built = self.build_board(m, b, p, state) if build else None
+        io.ok(self._summary(m, b, p, state) + ("" if built is None else
+              ("; built" if built else "; NOT built (it will be retried before flashing)")))
+
+    def build_board(self, m: Machine, b: MachineBoard, p: BoardProfile, state: str,
+                    force: bool = False) -> bool:
+        """Build what this board needs (Katapult only if it has none, then Klipper).
+        Builds are kept on disk, so a board can be flashed later, on its own. Nothing is flashed here."""
+        io = self.io
+        kinds = (["katapult"] if state == "no" else []) + ["klipper"]
+        for kind in kinds:
+            if not force and load_build(self.s, m.slug, b.label, kind):
+                continue
+            while True:
+                try:
+                    res = build_firmware(self.s, self.app.runner, kind=kind, profile=p,
+                                         machine_slug=m.slug, label=b.label)
+                    io.ok(f"{kind} built ({res.source_version})")
+                    break
+                except BuildError as exc:
+                    io.error(str(exc))
+                    if not io.confirm("Try the build again?", default=False):
+                        return False
+        return True
 
     def _summary(self, m: Machine, b: MachineBoard, p: BoardProfile, state: str) -> str:
         link = p.interface + (f" {p.can_bitrate}" if p.can_bitrate else "")
@@ -218,7 +242,9 @@ class UpdateFlow:
                     self.app.reg.set_katapult(m.slug, b.label, "yes" if j == 0 else "no")
 
     # -- plan, build, flash --------------------------------------------------------------
-    def plan_and_run(self, m: Machine) -> None:
+    def plan_and_run(self, m: Machine, rebuild: bool = False) -> None:
+        """Plan, make sure the builds exist, then flash. `rebuild` forces fresh builds (use it when
+        updating an existing machine: Klipper may have changed since the last build)."""
         io = self.io
         while True:
             for b in m.boards:                     # per board; known answers are skipped
@@ -237,45 +263,54 @@ class UpdateFlow:
             if plan.has_errors:
                 self.app.show_plan(plan)
                 return
+        profiles = self.app.profiles()
+        for b in m_run.boards:                     # builds: only missing ones, or all when rebuilding
+            if not self.build_board(m, b, profiles[b.profile_id],
+                                    self.app.reg.katapult(m.slug, b.label), force=rebuild):
+                io.warn(f"'{b.label}' is not built, so it cannot be flashed now.")
+                return
+        io.ok("Builds ready. Nothing has been written to any board yet.")
         if self.app.runner.dry_run:
-            io.warn("--dry-run: builds run, but nothing is flashed and no service is touched.")
-        i = io.choose("What now?", ["Build and flash (recommended)", "Only build (flash later)",
-                                    "Save and exit"], default=0)
-        if i is None or i == 2:
-            return
-        if not self.app.run_plan(m_run, phase="build", save_as=m):
-            return
-        io.ok("Everything built. Nothing has been written to any board yet.")
-        if i == 1:
+            io.warn("--dry-run: nothing is flashed and no service is touched.")
+        i = io.choose("What now?", ["Flash now (recommended)",
+                                    "Save and exit (flash later: Machines > Flash)"], default=0)
+        if i != 0:
             return
         if io.confirm("Flash now?", default=False):
             self.app.run_plan(m_run, phase="flash", save_as=m)
 
     def _select_boards(self, m: Machine):
-        """All boards by default. Skipping some is allowed, with a clear warning about mixed versions.
-        Returns the machine to run (m itself when nothing is skipped) or None to leave."""
+        """Which boards to work on: all (default), one, or several. Leaving some out is allowed,
+        with a warning about mixed versions. Returns the machine to run (m itself when all) or None."""
         io = self.io
         if len(m.boards) < 2:
             return m
-        i = io.choose("Which boards do you update?", [f"All {len(m.boards)} boards (recommended)",
-                                                       "Choose which ones to skip"], default=0)
+        i = io.choose("Which boards?", [f"All {len(m.boards)} boards (recommended)",
+                                        "Only one board", "Several: choose which ones"], default=0)
         if i is None:
             return None
         if i == 0:
             return m
-        skip: set = set()
-        while True:
-            rows = [f"[{'skip' if b.label in skip else 'update'}] {b.label}" for b in m.boards]
-            j = io.choose("Select a board to toggle it (0 = done):", rows, cancel="Done")
+        if i == 1:
+            j = io.choose("Which board?", [b.label for b in m.boards])
             if j is None:
-                break
-            skip ^= {m.boards[j].label}
-        keep = [b for b in m.boards if b.label not in skip]
-        if not keep:
-            io.warn("You skipped every board: nothing to do.")
-            return None
-        if skip:
-            io.warn(f"Skipping: {', '.join(sorted(skip))}. They keep their current firmware, so the machine "
+                return None
+            keep = [m.boards[j]]
+        else:
+            skip: set = set()
+            while True:
+                rows = [f"[{'skip' if b.label in skip else 'update'}] {b.label}" for b in m.boards]
+                j = io.choose("Select a board to toggle it (0 = done):", rows, cancel="Done")
+                if j is None:
+                    break
+                skip ^= {m.boards[j].label}
+            keep = [b for b in m.boards if b.label not in skip]
+            if not keep:
+                io.warn("You skipped every board: nothing to do.")
+                return None
+        left = [b.label for b in m.boards if b not in keep]
+        if left:
+            io.warn(f"Not touching: {', '.join(left)}. They keep their current firmware, so the machine "
                     "will run mixed Klipper versions until you update them.")
         return Machine(name=m.name, can_interface=m.can_interface, boards=keep)
 

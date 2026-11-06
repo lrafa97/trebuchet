@@ -97,7 +97,8 @@ class UpdateFlow:
         io = self.io
         io.title(f"Board {n} of {total}: {dev.name}")
         io.say(self._describe(dev))
-        sugg = matching.suggest(dev, profiles, entries, self.app.reg, cfg_path)
+        family = self._family(dev)
+        sugg = matching.suggest(dev, profiles, entries, self.app.reg, cfg_path, family=family)
         if sugg and sugg[0].kind == "remembered":
             io.ok(f"Recognised: {sugg[0].title}")
             if io.confirm("Use it?", default=True):
@@ -113,11 +114,20 @@ class UpdateFlow:
             s = sugg[i]
             profile = s.profile or wizard.create(entry=s.entry, device=dev)
         elif i == len(sugg):
-            entry = self.app.browse_catalog(dev.chip)
+            entry = self.app.browse_catalog(dev.chip, family=family)
             profile = wizard.create(entry=entry, device=dev) if entry else None
         else:
             profile = wizard.create(device=dev)
         return (profile, dev.name) if profile else None
+
+    def _family(self, dev: discover.Device) -> str:
+        """A board in a ROM bootloader (DFU) reports no chip. Ask once, STM32 is the default."""
+        core = discover.chip_core(dev.chip)
+        if core:
+            return ""
+        i = self.io.choose("This board does not report its chip. Which family is it?",
+                           ["STM32 (a DFU bootloader is STM32's)", "RP2040"], default=0, cancel="I don't know")
+        return {0: "stm32", 1: "rp2040"}.get(i, "")
 
     @staticmethod
     def _describe(dev: discover.Device) -> str:
@@ -219,19 +229,55 @@ class UpdateFlow:
                 break
             if not self._repair(m, plan):
                 return
+        m_run = self._select_boards(m)
+        if m_run is None:
+            return
+        if m_run is not m:
+            plan = self.app.plan_for(m_run)
+            if plan.has_errors:
+                self.app.show_plan(plan)
+                return
         if self.app.runner.dry_run:
             io.warn("--dry-run: builds run, but nothing is flashed and no service is touched.")
         i = io.choose("What now?", ["Build and flash (recommended)", "Only build (flash later)",
                                     "Save and exit"], default=0)
         if i is None or i == 2:
             return
-        if not self.app.run_plan(m, phase="build"):
+        if not self.app.run_plan(m_run, phase="build", save_as=m):
             return
         io.ok("Everything built. Nothing has been written to any board yet.")
         if i == 1:
             return
         if io.confirm("Flash now?", default=False):
-            self.app.run_plan(m, phase="flash")
+            self.app.run_plan(m_run, phase="flash", save_as=m)
+
+    def _select_boards(self, m: Machine):
+        """All boards by default. Skipping some is allowed, with a clear warning about mixed versions.
+        Returns the machine to run (m itself when nothing is skipped) or None to leave."""
+        io = self.io
+        if len(m.boards) < 2:
+            return m
+        i = io.choose("Which boards do you update?", [f"All {len(m.boards)} boards (recommended)",
+                                                       "Choose which ones to skip"], default=0)
+        if i is None:
+            return None
+        if i == 0:
+            return m
+        skip: set = set()
+        while True:
+            rows = [f"[{'skip' if b.label in skip else 'update'}] {b.label}" for b in m.boards]
+            j = io.choose("Select a board to toggle it (0 = done):", rows, cancel="Done")
+            if j is None:
+                break
+            skip ^= {m.boards[j].label}
+        keep = [b for b in m.boards if b.label not in skip]
+        if not keep:
+            io.warn("You skipped every board: nothing to do.")
+            return None
+        if skip:
+            io.warn(f"Skipping: {', '.join(sorted(skip))}. They keep their current firmware, so the machine "
+                    "will run mixed Klipper versions until you update them.")
+        return Machine(name=m.name, can_interface=m.can_interface, boards=keep)
 
     def _repair(self, m: Machine, plan) -> bool:
         """Errors are never a dead end: offer to fix them here. False = leave."""

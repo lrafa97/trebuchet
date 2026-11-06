@@ -39,9 +39,10 @@ def _chip_ok(core: str, chips) -> bool:
 
 
 def suggest(device: discover.Device, profiles: list, entries: list, registry: Registry,
-            printer_cfg: Optional[Path] = None, limit_catalog: int = 4) -> list:
+            printer_cfg: Optional[Path] = None, limit_catalog: int = 4, family: str = "") -> list:
     out: list[Suggestion] = []
     core = discover.chip_core(device.chip)
+    family = family or ("rp2040" if core == "rp2040" else "stm32" if core.startswith("stm32") else "")
     want = discover.profile_interface_for(device)
     by_id = {p.id: p for p in profiles}
     used_profiles: set = set()
@@ -58,6 +59,8 @@ def suggest(device: discover.Device, profiles: list, entries: list, registry: Re
     # 2. saved profiles that fit
     for p in profiles:
         if p.id in used_profiles or p.interface != want:
+            continue
+        if family and p.family != family:
             continue
         if core and discover.chip_core(p.mcu) and discover.chip_core(p.mcu) != core:
             continue
@@ -77,10 +80,13 @@ def suggest(device: discover.Device, profiles: list, entries: list, registry: Re
             used_entries.add(m.entry.id)
 
     # 4. catalog by MCU, only when pins gave nothing
-    if not used_entries and core:
-        fallback = [e for e in entries if e.family in ("stm32", "rp2040") and e.id not in saved_catalog_ids
-                    and _chip_ok(core, e.chips) and core in {discover.chip_core(c) for c in e.chips}]
+    if not used_entries and (core or family):
+        if core:
+            fallback = [e for e in entries if e.family in ("stm32", "rp2040") and e.id not in saved_catalog_ids
+                        and _chip_ok(core, e.chips) and core in {discover.chip_core(c) for c in e.chips}]
+        else:
+            fallback = [e for e in entries if e.family == family and e.id not in saved_catalog_ids]
         fallback.sort(key=lambda e: (e.interface_hint != ("can" if "can" in want else "usb"), e.name))
         for e in fallback[:limit_catalog]:
-            out.append(Suggestion("catalog", e.name, "Klipper's list, same MCU", entry=e, score=0.1))
+            out.append(Suggestion("catalog", e.name, "Klipper's list, same MCU" if core else "Klipper's list, same chip family", entry=e, score=0.1))
     return out

@@ -72,13 +72,15 @@ class App:
         elif plan.has_errors:
             io.say("\nNo plan while there are errors.")
 
-    def run_plan(self, m: Machine, phase: str) -> bool:
+    def run_plan(self, m: Machine, phase: str, save_as: "Machine | None" = None) -> bool:
+        """`m` is what runs (it may be a subset of the machine); `save_as` is the full machine
+        that gets saved, so skipped boards are never dropped from the file."""
         plan = self.plan_for(m)                      # state may have changed since the last look
         if plan.has_errors:
             self.show_plan(plan)
             return False
         return execute_plan(plan, m, self.profiles(), self.s, self.runner, self.reg, self.flasher,
-                            self.io, self.save, phase=phase)
+                            self.io, lambda _m: self.save(save_as or m), phase=phase)
 
     # ------------------------------------------------------------------ status
     def _describe_repo(self, path) -> str:
@@ -147,7 +149,7 @@ class App:
         self.io.pause()
 
     # ------------------------------------------------------------------ catalog
-    def browse_catalog(self, chip_hint: str = "") -> "catalog.CatalogEntry | None":
+    def browse_catalog(self, chip_hint: str = "", family: str = "") -> "catalog.CatalogEntry | None":
         """Brand, then board (only boards with the MCU the board reports, when known)."""
         io = self.io
         entries = catalog.load_catalog(self.s.klipper_dir, self.s.catalog_file)
@@ -159,6 +161,9 @@ class App:
         labels = dict(catalog.VENDORS)
         labels[catalog.OTHER] = "Other brands"
         core = discover.chip_core(chip_hint)
+        if family and not core:
+            io.say(f"Showing only {family.upper()} boards.")
+            usable = [e for e in usable if e.family == family] or usable
         if core:
             io.say(f"Showing only boards with the MCU this board reports ({core}).")
             usable = [e for e in usable if core in {discover.chip_core(c) for c in e.chips}] or usable

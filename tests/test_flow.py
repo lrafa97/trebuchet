@@ -277,3 +277,40 @@ class OrderTests(unittest.TestCase):
                 elif x[0] == "choose" and "already have Katapult" in x[1]:
                     seq.append("KATAPULT")
             self.assertEqual(seq, ["BOARD", "KATAPULT", "BOARD", "KATAPULT"], seq)
+
+
+class ChoiceTests(unittest.TestCase):
+    def test_dfu_board_without_chip_asks_family_once_and_filters_suggestions(self):
+        from trebuchet.update_flow import UpdateFlow
+        with tempfile.TemporaryDirectory() as t:
+            s, _ = make_env(Path(t))
+            entries = __import__("trebuchet.catalog", fromlist=["x"]).load_klipper_catalog(
+                CatalogAndPinTests().klipper_cfgs(Path(t)))
+            io = ScriptedIO([("Which family", 1)])                      # RP2040
+            app = App(s, io)
+            fam = UpdateFlow(app)._family(discover.Device("dfu", "usb", chip=""))
+            self.assertEqual(fam, "rp2040")
+            sug = matching.suggest(discover.Device("dfu", "usb", chip=""), [], entries, app.reg, None,
+                                   family=fam)
+            self.assertTrue(sug and all(x.entry.family == "rp2040" for x in sug))
+            self.assertEqual(UpdateFlow(App(s, ScriptedIO([])))._family(
+                discover.Device("m", "usb", chip="stm32f446xx")), "")      # known chip: no question
+
+    def test_skipping_a_board_never_drops_it_from_the_saved_machine(self):
+        from trebuchet.update_flow import UpdateFlow
+        with tempfile.TemporaryDirectory() as t:
+            s, _ = make_env(Path(t))
+            make_profile(s, "a", interface="usb", mcu="stm32f446")
+            make_profile(s, "b", interface="usb", mcu="stm32f446")
+            m = Machine("bench", "can0", [MachineBoard("one", "a", serial="1"), MachineBoard("two", "b", serial="2")])
+            picks = iter([1])                                           # toggle board 2, then done
+            io = ScriptedIO([("Which boards", 1), ("Select a board", lambda o: next(picks, None))])
+            app = App(s, io)
+            app.save(m)
+            sub = UpdateFlow(app)._select_boards(m)
+            self.assertEqual([b.label for b in sub.boards], ["one"])
+            self.assertIn("mixed", io.text)
+            app.reg.set_katapult("bench", "one", "yes")
+            app.run_plan(sub, "build", save_as=m)
+            from trebuchet.profiles import load_machine
+            self.assertEqual(len(load_machine(s.machines_dir / "bench.toml").boards), 2)

@@ -95,7 +95,7 @@ python3 -m unittest discover -s tests -v
 python3.8 -m unittest discover -s tests; python3.9 ...; python3.13 ...
 shellcheck install.sh uninstall.sh trebuchet.sh
 ```
-No GitHub (v0.2.0) são 80 testes, todos a passar em Python 3.14 no Ubuntu. O `test_flow.py` importa de `tests.test_core`, por isso corre-se sempre a partir da raiz.
+No GitHub são 85 testes, todos a passar em Python 3.14 no Ubuntu. O `test_flow.py` importa de `tests.test_core`, por isso corre-se sempre a partir da raiz.
 
 **Entrega de alterações (como o Claude trabalha com o utilizador):**
 1. O Claude trabalha num clone, faz commit e gera `git format-patch`.
@@ -162,18 +162,18 @@ No GitHub (v0.2.0) são 80 testes, todos a passar em Python 3.14 no Ubuntu. O `t
 
 ## 8. Estado
 
-**Versão no GitHub: v0.2.0**, commit `9730e02`, "One flow: scan, identify, plan, build, flash (v0.2)". Os 4 patches seguintes **não estão no repositório** (confirmado no código em 2026-11-06). Partes das secções 3, 5 e 6 descrevem o comportamento depois destes patches:
+**Versão no GitHub: v0.2.0**, com estes 4 patches aplicados em 2026-11-06. Foram recriados a partir da conversa original e só foram testados com testes simulados:
 1. "Errors are no longer a dead end; no Katapult test offered in dry-run"
 2. "Finish each board before starting the next"
 3. "Choose which boards to update; ask the chip family for boards in DFU"
 4. "Build at the end of each board; flash one, several or all boards"
 
 **Feito (testado só com testes simulados e `--dry-run`):**
-- fluxo único "Update a machine"; perfil por board;
+- fluxo único "Update a machine"; perfil por board; build no fim de cada board; gravar uma, várias ou todas;
 - MCU/interface/bitrate lidos do `.config`; verificação do offset Klipper/Katapult;
 - catálogo de boards a partir do Klipper, sugestão por pinos e por MCU/família; funcionamento sem `printer.cfg`;
 - boards lembradas por UUID CAN / serial USB; deteção da bridge via `gs_usb`;
-- guarda de impressão via Moonraker; ecrã inicial com estado;
+- guarda de impressão via Moonraker; ecrã inicial com estado; reparação de erros dentro do fluxo;
 - tudo em inglês; README reescrito; testes a passar em Python 3.8, 3.9 e 3.13; shellcheck limpo.
 
 **Confirmado em máquina real (Pi 3B, Bullseye, Python 3.9.2):**
@@ -187,7 +187,6 @@ No GitHub (v0.2.0) são 80 testes, todos a passar em Python 3.14 no Ubuntu. O `t
 - preparar o hardware seguinte: mainboard STM32H7 e placas de toolhead por USB **[confirmar na documentação oficial: suporte do Katapult ao STM32H7, offsets, como entrar em DFU/bootloader em cada placa]**;
 - escolher a licença (decisão do utilizador; sem licença é "todos os direitos reservados");
 - traduzir os comentários em português que sobram em `tests/test_core.py` (opcional);
-- recuperar os patches 1 a 4 e aplicá-los pela ordem acima, ou refazer essas alterações.
 
 **Problemas conhecidos / não confirmado (confirmar antes de confiar):**
 - formatos de resposta do Moonraker (`print_stats`, `mcu_constants.MCU`, `mcu_version`, `CANBUS_BRIDGE`): suposições, testadas só com respostas inventadas; se faltar um campo o chip aparece como `?`;

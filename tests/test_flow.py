@@ -197,3 +197,30 @@ class StatusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepairTests(unittest.TestCase):
+    def test_bad_profile_is_repairable_inside_the_flow_and_dry_run_has_no_dead_end(self):
+        from trebuchet.update_flow import UpdateFlow
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            s, _ = make_env(tmp)
+            s.klipper_dir = CatalogAndPinTests().klipper_cfgs(tmp)
+            (s.klipper_dir / "Makefile").write_text((s.katapult_dir / "Makefile").read_text())
+            (s.klipper_dir / ".config").write_text(fake_config("stm32", "stm32f446", "usb", None, klipper=True))
+            s.dry_run = True
+            bad = make_profile(s, "old", interface="usb", mcu="smt32f446")      # typo from an old version
+            m = Machine("bench", "can0", [MachineBoard("mcu", "old", serial="A", chip="stm32f446xx")])
+            io = ScriptedIO([("already have Katapult", 0),                       # yes
+                             ("What do you want to do", 0),                      # redo the profile
+                             ("Brand", 0), ("Board:", 0),
+                             ("Klipper firmware settings", 1),                   # current .config
+                             ("How is the first Katapult", lambda o: 0),
+                             ("What now", 2)])
+            app = App(s, io)
+            app.save(m)
+            UpdateFlow(app).plan_and_run(m)
+            self.assertNotEqual(m.boards[0].profile_id, "old")
+            self.assertFalse(app.plan_for(m).has_errors)
+            offered = [x for x in io.seen if x[0] == "choose" and "already have Katapult" in x[1]]
+            self.assertTrue(all(len(x[2]) == 2 for x in offered))               # no test option in dry-run

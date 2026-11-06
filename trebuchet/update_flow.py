@@ -12,6 +12,7 @@ import socket
 from typing import Optional
 
 from . import catalog, discover, matching
+from .advisor import ERROR
 from .profile_wizard import ProfileWizard
 from .profiles import BoardProfile, Machine, MachineBoard, list_machines, slugify
 
@@ -166,42 +167,61 @@ class UpdateFlow:
         unknown = [b for b in m.boards if self.app.reg.katapult(m.slug, b.label) == "unknown"]
         if not unknown:
             return
-        names = ", ".join(b.label for b in unknown)
+        can_test = not self.app.runner.dry_run
         if len(unknown) > 1:
-            i = io.choose(f"Do these boards already have Katapult? ({names})",
-                          ["Yes, all of them", "No, none of them (new boards)",
-                           "Not sure: test each one (recommended)"], default=2)
-            if i == 0 or i == 1:
+            opts = ["Yes, all of them", "No, none of them (new boards)"]
+            if can_test:
+                opts.append("Not sure: test each one (recommended)")
+            else:
+                opts.append("Not sure: answer one by one")
+            i = io.choose("Do these boards already have Katapult? "
+                          f"({', '.join(b.label for b in unknown)})", opts, default=2)
+            if i is None:
+                return
+            if i in (0, 1):
                 for b in unknown:
                     self.app.reg.set_katapult(m.slug, b.label, "yes" if i == 0 else "no")
                 return
-            if i is None:
-                return
+            if not can_test:
+                can_test = False
         for b in unknown:
             p = self.app.profiles().get(b.profile_id)
-            i = io.choose(f"Does '{b.label}' already have Katapult?",
-                          ["Yes", "No", "Not sure: test it now (asks the board for its bootloader)"],
-                          default=2)
-            if i == 0 or i == 1:
+            opts = ["Yes", "No"]
+            if can_test and p:
+                opts.append("Not sure: test it now (asks the board for its bootloader)")
+            elif not can_test and self.app.runner.dry_run:
+                io.say("  (the test is not available in --dry-run: answer from what you know)")
+            i = io.choose(f"Does '{b.label}' already have Katapult?", opts,
+                          default=2 if len(opts) == 3 else None)
+            if i in (0, 1):
                 self.app.reg.set_katapult(m.slug, b.label, "yes" if i == 0 else "no")
-            elif i == 2 and p:
-                self.app.flasher.active_katapult_test(m, b, p)
+            elif i == 2:
+                result = self.app.flasher.active_katapult_test(m, b, p)
+                if result in ("yes", "no"):
+                    self.app.reg.set_katapult(m.slug, b.label, result)
+                else:
+                    io.warn("The test did not settle it.")
+                    j = io.choose(f"Does '{b.label}' already have Katapult?", ["Yes", "No"])
+                    if j is not None:
+                        self.app.reg.set_katapult(m.slug, b.label, "yes" if j == 0 else "no")
 
     # -- plan, build, flash --------------------------------------------------------------
     def plan_and_run(self, m: Machine) -> None:
         io = self.io
-        self._resolve_katapult(m)
-        wiz = ProfileWizard(self.s, io, self.app.runner)
-        for b in m.boards:                         # Katapult config only for boards that need Katapult
-            p = self.app.profiles().get(b.profile_id)
-            if p and self.app.reg.katapult(m.slug, b.label) == "no":
-                if not wiz.ensure_katapult_config(p):
-                    io.warn(f"No Katapult config for '{b.label}': the plan will not include it.")
-        plan = self.app.plan_for(m)
-        self.app.show_plan(plan)
-        if plan.has_errors:
-            io.warn("Fix the errors above and run again (they are saved: nothing has to be typed twice).")
-            return
+        while True:
+            self._resolve_katapult(m)
+            wiz = ProfileWizard(self.s, io, self.app.runner)
+            for b in m.boards:                     # Katapult config only for boards that need Katapult
+                p = self.app.profiles().get(b.profile_id)
+                if p and self.app.reg.katapult(m.slug, b.label) == "no" and not p.problems():
+                    if not wiz.ensure_katapult_config(p):
+                        io.warn(f"No Katapult config for '{b.label}': the plan will not include it.")
+            plan = self.app.plan_for(m)
+            self.app.show_plan(plan)
+            if not plan.has_errors:
+                break
+            if not self._repair(m, plan):
+                return
         if self.app.runner.dry_run:
             io.warn("--dry-run: builds run, but nothing is flashed and no service is touched.")
         i = io.choose("What now?", ["Build and flash (recommended)", "Only build (flash later)",
@@ -215,3 +235,38 @@ class UpdateFlow:
             return
         if io.confirm("Flash now?", default=False):
             self.app.run_plan(m, phase="flash")
+
+    def _repair(self, m: Machine, plan) -> bool:
+        """Errors are never a dead end: offer to fix them here. False = leave."""
+        io = self.io
+        bad = [b for b in m.boards if any(a.level == ERROR and a.board == b.label for a in plan.advice)]
+        targets = bad or list(m.boards)
+        opts = [f"Redo the profile of '{b.label}' (pick the board again, then menuconfig)" for b in targets]
+        opts += [f"Remove '{b.label}' from this machine" for b in targets]
+        opts.append("Leave it for now")
+        i = io.choose("The plan has errors. What do you want to do?", opts, default=0 if bad else None,
+                      cancel="Leave")
+        if i is None or i == len(opts) - 1:
+            return False
+        n = len(targets)
+        if i >= n:
+            gone = targets[i - n]
+            m.boards = [b for b in m.boards if b.label != gone.label]
+            self.app.save(m)
+            return bool(m.boards)
+        b = targets[i]
+        old = self.app.profiles().get(b.profile_id)
+        hint = b.chip or (old.mcu if old else "")
+        dev = None
+        if b.chip:                                # keep checking against what the scan saw
+            dev = discover.Device(b.label, "can" if b.uuid else "usb", uuid=b.uuid, serial=b.serial,
+                                  chip=b.chip)
+            dev.bridge = bool(old and old.is_bridge)
+        entry = self.app.browse_catalog(hint)
+        wizard = ProfileWizard(self.s, io, self.app.runner)
+        profile = wizard.create(entry=entry, device=dev) if entry else wizard.create(device=dev)
+        if profile:
+            b.profile_id = profile.id
+            self.app.save(m)
+        return True
+

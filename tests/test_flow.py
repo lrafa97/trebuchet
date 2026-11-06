@@ -224,3 +224,56 @@ class RepairTests(unittest.TestCase):
             self.assertFalse(app.plan_for(m).has_errors)
             offered = [x for x in io.seen if x[0] == "choose" and "already have Katapult" in x[1]]
             self.assertTrue(all(len(x[2]) == 2 for x in offered))               # no test option in dry-run
+
+
+class OrderTests(unittest.TestCase):
+    def test_each_board_is_finished_before_the_next_one_starts(self):
+        from trebuchet.update_flow import UpdateFlow
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            s, _ = make_env(tmp)
+            s.klipper_dir = CatalogAndPinTests().klipper_cfgs(tmp)
+            (s.klipper_dir / "Makefile").write_text((s.katapult_dir / "Makefile").read_text())
+            s.printer_cfg = str(tmp / "none.cfg")
+            by_id = tmp / "by-id"
+            by_id.mkdir()
+            (by_id / "usb-Klipper_stm32f446xx_AAA111-if00").write_text("")
+            (by_id / "usb-Klipper_rp2040_BBB222-if00").write_text("")
+            cfgs = {"stm32f446": ("stm32", "stm32f446"), "rp2040": ("rp2040", "rp2040")}
+            calls = {"n": 0}
+
+            def use_current_config(options):
+                fam, mcu = list(cfgs.values())[calls["n"] % 2]
+                # discovery order is not guaranteed: write the config of whichever board is asked
+                chip = io.current_chip
+                fam, mcu = cfgs[chip]
+                (s.klipper_dir / ".config").write_text(fake_config(fam, mcu, "usb", None, klipper=True))
+                calls["n"] += 1
+                return 1
+
+            io = ScriptedIO([("Which board is this", 0),
+                             ("Klipper firmware settings", use_current_config),
+                             ("How is the first Katapult", lambda o: 0),
+                             ("already have Katapult", 0),
+                             ("What now", 2)], asks=["bench"])
+            io.current_chip = ""
+            orig_title = io.title
+            def title(text):
+                for chip in cfgs:
+                    if chip in text.lower():
+                        io.current_chip = chip
+                io.seen.append(("title", text))
+            io.title = title
+            app = App(s, io)
+            orig = patched_discovery(tmp, by_id)
+            try:
+                UpdateFlow(app).new_machine()
+            finally:
+                discover.discover = orig
+            seq = []
+            for x in io.seen:
+                if x[0] == "title" and x[1].startswith("Board "):
+                    seq.append("BOARD")
+                elif x[0] == "choose" and "already have Katapult" in x[1]:
+                    seq.append("KATAPULT")
+            self.assertEqual(seq, ["BOARD", "KATAPULT", "BOARD", "KATAPULT"], seq)

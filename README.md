@@ -142,8 +142,15 @@ python3 -m unittest discover -s tests -v
 
 GitHub CI (`.github/workflows/tests.yml`) runs Python 3.8, 3.9, 3.11, 3.13 and shellcheck.
 
-## Licence
+## License
 
-Not chosen yet; without one the code is "all rights reserved". Choose before making it public. No
-KIAUH code was copied; KIAUH and Katapult are GPL-3.0, so copying code from them would make the
-result GPL-3.0.
+Copyright (C) 2026 lrafa97
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. It is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for details.
+
+The program only calls Klipper and Katapult as external tools. No KIAUH code was copied.

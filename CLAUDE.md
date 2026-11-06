@@ -34,6 +34,7 @@ Itens marcados com **[assumido]** ou **[não confirmado]** não foram vistos em 
 | Python exigido | **>= 3.8**, só biblioteca padrão. Sem dependências pip. |
 | Pacotes apt (instalados pelo `install.sh`) | compilador ARM, `build-essential`, `libncurses-dev`, `dfu-util`, `usbutils`, `iproute2`, `python3-serial`; opcionais `stm32flash`, `python3-can` |
 | Dependências externas | Klipper (menuconfig e `canbus_query.py`), Katapult (`flashtool.py`), Moonraker (estado de impressão), `gs_usb` (driver da bridge USB-CAN) |
+| Licença | GPL-3.0 |
 | KIAUH | só referência de UX. **Nenhum código copiado** (KIAUH e Katapult são GPL-3.0). |
 
 
@@ -185,7 +186,6 @@ No GitHub são 85 testes, todos a passar em Python 3.14 no Ubuntu. O `test_flow.
 **Por fazer:**
 - primeiro teste real numa board de bancada (compilar, gravar, verificar);
 - preparar o hardware seguinte: mainboard STM32H7 e placas de toolhead por USB **[confirmar na documentação oficial: suporte do Katapult ao STM32H7, offsets, como entrar em DFU/bootloader em cada placa]**;
-- escolher a licença (decisão do utilizador; sem licença é "todos os direitos reservados");
 - traduzir os comentários em português que sobram em `tests/test_core.py` (opcional);
 
 **Problemas conhecidos / não confirmado (confirmar antes de confiar):**
